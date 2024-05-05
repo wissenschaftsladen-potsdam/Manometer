@@ -28,13 +28,10 @@ IPAddress apIP(192, 168, 112, 1);
 String temp = "";
 
 // Function to check if a string is an IP address
-boolean isIp(String str)
-{
-    for (int i = 0; i < str.length(); i++)
-    {
+boolean isIp(String str) {
+    for (int i = 0; i < str.length(); i++) {
         int c = str.charAt(i);
-        if (c != '.' && (c < '0' || c > '9'))
-        {
+        if (c != '.' && (c < '0' || c > '9')) {
             return false;
         }
     }
@@ -42,11 +39,9 @@ boolean isIp(String str)
 }
 
 // Function to convert IP address to string
-String toStringIp(IPAddress ip)
-{
+String toStringIp(IPAddress ip) {
     String res = "";
-    for (int i = 0; i < 3; i++)
-    {
+    for (int i = 0; i < 3; i++) {
         res += String((ip >> (8 * i)) & 0xFF) + ".";
     }
     res += String(((ip >> 8 * 3)) & 0xFF);
@@ -54,10 +49,8 @@ String toStringIp(IPAddress ip)
 }
 
 // Function to redirect to captive portal for non-IP requests
-bool captivePortal()
-{
-    if (!isIp(server.hostHeader()))
-    {
+bool captivePortal() {
+    if (!isIp(server.hostHeader())) {
         Serial.println("Request redirected to captive portal");
         server.sendHeader("Location", String("http://") + toStringIp(server.client().localIP()), true);
         server.send(302, "text/plain", "");
@@ -68,10 +61,8 @@ bool captivePortal()
 }
 
 // Function to handle 404 Not Found errors
-void handleNotFound()
-{
-    if (captivePortal())
-    {
+void handleNotFound() {
+    if (captivePortal()) {
         return;
     }
 
@@ -402,7 +393,7 @@ void handleRoot()
     temp += "    var settingsButton = document.createElement('button');";
     temp += "    settingsButton.innerHTML = 'Einstellungen';";
     temp += "    settingsButton.addEventListener('click', openSettingsPopup);";
-    temp += "    // Hinzufügen des Einstellungen-Buttons zur Menü-Div";
+    temp += "    // HinzufÃ¼gen des Einstellungen-Buttons zur MenÃ¼-Div";
     temp += "    var menuDiv = document.getElementById('menue');";
     temp += "    menuDiv.appendChild(settingsButton);";
     temp += "";
@@ -766,16 +757,12 @@ void handleRoot()
     temp += "</html>";
 
     // Send HTML response
-    server.send(200, "text/html", temp);
-
-    // Clear temp to save memory
-    temp = "";
+    server.send(200, "text/html", temp);    
 }
 
 
 // Function to initialize HTTP server and handle various routes
-void InitializeHTTPServer()
-{
+void InitializeHTTPServer() {
     server.on("/", handleRoot);
     server.on("/generate_204", handleRoot);
     server.on("/favicon.ico", handleRoot);
@@ -785,8 +772,7 @@ void InitializeHTTPServer()
     server.begin();
 }
 
-void setup()
-{
+void setup() {
     Serial.begin(115200);
     pinMode(beepPinGround, OUTPUT);
     digitalWrite(beepPinGround, LOW);
@@ -806,7 +792,7 @@ void setup()
     // Handle request for current SSID
     server.on("/getSSID", HTTP_GET, []() {
         server.send(200, "text/plain", WiFi.softAPSSID());
-        });
+    });
 
     // Handle request to save new SSID and restart D1 Mini
     server.on("/saveSSID", HTTP_POST, []() {
@@ -815,14 +801,13 @@ void setup()
         Serial.print("New SSID: ");
         Serial.println(newSSID);
         server.send(200, "text/plain", "SSID saved. Restarting...");
-        delay(1000); // Kurze Verzögerung, um die Antwort an den Client zu senden
+        delay(1000); // Kurze VerzÃ¶gerung, um die Antwort an den Client zu senden
         ESP.restart(); // Neustart des D1 Mini
-        });
+    });
 }
 
 
-void loop()
-{
+void loop() {
     dnsServer.processNextRequest();
     server.handleClient();
 }
