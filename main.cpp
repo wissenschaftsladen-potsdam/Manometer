@@ -757,7 +757,10 @@ void handleRoot()
     temp += "</html>";
 
     // Send HTML response
-    server.send(200, "text/html", temp);    
+    server.send(200, "text/html", temp);
+
+    // Clear temp to save memory
+    temp = "";
 }
 
 
