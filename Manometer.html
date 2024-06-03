@@ -282,17 +282,17 @@
     // Create slider for setting pressure drop rate
     var druckAbfallSlider = document.createElement("input");
     druckAbfallSlider.setAttribute("type", "range");
-    druckAbfallSlider.setAttribute("min", "0,208");
+    druckAbfallSlider.setAttribute("min", "0.208");
     druckAbfallSlider.setAttribute("max", "10");
-    druckAbfallSlider.setAttribute("value", "0,208");
+    druckAbfallSlider.setAttribute("value", "0.208");
     druckAbfallSlider.setAttribute("step", "1");
     druckAbfallSlider.setAttribute("style", "width: 200px;");
     druckAbfallSlider.oninput = function() {
         druckAbfallRate = parseInt(this.value);
     };
 
-    / Create text node for displaying pressure drop rate label
-    var druckAbfallText = document.createTextNode("Pressure Drop Rate (bar/s): ");
+    // Create text node for displaying pressure drop rate label
+    var druckAbfallText = document.createTextNode("Pressure Drop Rate (bar/s): "+ druckAbfallSlider.value);
     
     // Create div for containing pressure drop rate slider
     var druckAbfallDiv = document.createElement("div");
@@ -332,24 +332,30 @@
     document.body.appendChild(buttonDiv); // Append the div at the end of the body
     
     // Set the frames per second
-var fps = 60;
+    var fps = 60;
 
-// Set default start pressure to 300
-var startDruck = 300;
+    // Set default start pressure to 300
+    var startDruck = 300;
 
-// Set default pressure drop rate to 1
-var druckAbfallRate = 1;
+    // Set default pressure drop rate to 0,208
+    //var druckAbfallRate = 0.208;
 
-// Initialize the pressure bar
-var bar = startDruck;
+    // Initialize the pressure bar
+    var bar = startDruck;
 
-// Function to draw the pointer on the gauge based on the current pressure
-// Utilizes variables: context, canvas, x, y, radius, minBar, maxBar
-// - context: the 2D rendering context of the canvas
-// - canvas: the canvas element
-// - x, y: coordinates of the center of the gauge
-// - radius: radius of the gauge
-// - minBar, maxBar: minimum and maximum pressure values
+druckAbfallSlider.oninput = function() {
+    druckAbfallRate = parseInt(this.value);
+    druckAbfallText.nodeValue = "Pressure Drop Rate (bar/s): " + this.value;
+};
+
+
+    // Function to draw the pointer on the gauge based on the current pressure
+    // Utilizes variables: context, canvas, x, y, radius, minBar, maxBar
+    // - context: the 2D rendering context of the canvas
+    // - canvas: the canvas element
+    // - x, y: coordinates of the center of the gauge
+    // - radius: radius of the gauge
+    // - minBar, maxBar: minimum and maximum pressure values
 function drawZeiger(bar) {
     var angle = (((bar - minBar) / (maxBar - minBar)) * (Math.PI)) + Math.PI;
     var xZeiger = x + Math.cos(angle) * (radius - 70);
