@@ -5,32 +5,22 @@
 
 // Define the servo object and pins for servo and beep
 Servo ObjServo;
-static const int ServoGPIO = D4;
-static const int beepPin = D3;
-static const int beepPinGround = D2;
+const int ServoGPIO = D4;
+const int beepPin = D3;
+const int beepPinGround = D2;
 
 // Create an ESP8266WebServer object on port 80
 ESP8266WebServer server(80);
 
-// Define variables for storing header and sensor values
-String header;
-String valueString = String(0);
-String pressureValueString = String(0);
-int positon1 = 0;
-int positon2 = 0;
-
 // Define DNS server and access point IP address
-const char DNS_PORT = 53;
+const byte DNS_PORT = 53;
 DNSServer dnsServer;
 IPAddress apIP(192, 168, 112, 1);
 
-// Initialize a string for temporary use
-String temp = "";
-
 // Function to check if a string is an IP address
-boolean isIp(String str) {
-    for (int i = 0; i < str.length(); i++) {
-        int c = str.charAt(i);
+bool isIp(const String &str) {
+    for (size_t i = 0; i < str.length(); i++) {
+        char c = str.charAt(i);
         if (c != '.' && (c < '0' || c > '9')) {
             return false;
         }
@@ -39,7 +29,7 @@ boolean isIp(String str) {
 }
 
 // Function to convert IP address to string
-String toStringIp(IPAddress ip) {
+String toStringIp(const IPAddress &ip) {
     String res = "";
     for (int i = 0; i < 3; i++) {
         res += String((ip >> (8 * i)) & 0xFF) + ".";
@@ -68,13 +58,16 @@ void handleNotFound() {
 
     String requestedURL = server.uri();
 
-    String temp = "<!DOCTYPE HTML>";
-    temp += "<html><head>";
-    temp += "<title>404 Not Found</title>";
-    temp += "</head><body>";
-    temp += "<h1>404 Not Found</h1>";
-    temp += "<p>The requested URL '" + requestedURL + "' was not found on this server.</p>";
-    temp += "</body></html>";
+    String temp = "<!DOCTYPE HTML>\
+                    <html>\
+                    <head>\
+                    <title>404 Not Found</title>\
+                    </head>\
+                    <body>\
+                    <h1>404 Not Found</h1>\
+                    <p>The requested URL '" + requestedURL + "' was not found on this server.</p>\
+                    </body>\
+                    </html>";
 
     server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     server.sendHeader("Pragma", "no-cache");
@@ -85,711 +78,948 @@ void handleNotFound() {
     server.client().stop();
 }
 
-void handleRoot()
-{
-    String temp = "";
-    // HTML Header
-    server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    server.sendHeader("Pragma", "no-cache");
-    server.sendHeader("Expires", "-1");
-    server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  const char* htmlCode = R"=====(
+<html>
+<head>
+    <title>Manometer</title>
+    <style>
+        canvas { border: none; }
+        body { display: flex; flex-direction: column; justify-content: center; max-width: 400px; zoom: 200%; }
+        #menue { display: flex; justify-content: center; gap: 30px; }
+        #anzeige { position: relative; top: -140px; border-top: 1px black solid; padding-top: 10px; width: 400px; margin: 0 auto; }
+        #anzeige::before { content: 'RESTDRUCK: '; }
+        #timerDisplay { position: relative; top: -120px; margin: 0 auto; width: 400px; }
+        #startpress { position: relative; top: -100px; border-top: 1px solid lightgrey; width: 400px; margin: 0 auto; padding-top: 10px; }
+        #startpress input { width: 200px; margin: 20px; }
+        #p_rate { position: relative; top: -90px; margin: 0 auto; }
+        #p_rate input { width: 200px; margin: 20px; }
+        #startbutton { width: 25%; margin: 15px; padding: 30px; top: -80px; position: relative; }
+        #buttonPause { width: 25%; margin: 15px; padding: 30px; top: -80px; position: relative; }
+        #resetbutton { width: 25%; margin: 15px; padding: 30px; top: -80px; position: relative; }
+        #menue { margin: 20px; }
+        #timerSettings { display: none; }
+        #timerDiv { display: initial; position: relative; top: -100px; margin: 0 auto; display: none; gap: 10px; border-top: 1px solid black; width: 400px; justify-content: center; padding: 5px; }
+        #timerDiv label { margin: auto; margin-left: 0px; }
+        #buttonDiv { display: flex; justify-content: center; }
+        #minutesField { height: 50px; }
+        #secondsField { display: inline; height: 50px; }
+        #settingsPopup button { margin: 10px; }
+    </style>
+    <meta charset="utf-8">
+</head>
+<body onload="init()">
+    <div id="menue">
+        <select id="functionSelect" onchange="toggleFunction()">
+            <option value="current">Barometer Function</option>
+            <option value="timer">Timer Function</option>
+        </select>
+    </div>
+    <canvas id="manometer" width="400" height="400"></canvas>
+    <div id="anzeige"></div>
+    <div id="timerDisplay">Verstrichene Zeit: 00:00</div>
+    <div id="timerDiv">
+        <label>Timer (Min: Sec):</label>
+    </div>
+    <script>
+            // Get the canvas element and its 2D context
+    var canvas = document.getElementById('manometer');
+    var context = canvas.getContext('2d');
 
+    // Define variables for the center of the canvas, radius, and pressure range
+    var x = canvas.width / 2;
+    var y = canvas.height / 2;
+    var radius = canvas.width / 2 - 10;
+    var minBar = 0;
+    var maxBar = 300;
+    var rotBereich = 50; // Rotation range for the red section
 
-    // HTML Content
-temp += "<!DOCTYPE html>";
-temp += "<html>";
-temp += "<head>";
-temp += "<title>Manometer</title>";
-temp += "<style>";
-temp += "canvas {border: none;} body {display: flex;flex-direction: column;justify-content: center;max-width: 400px;zoom: 200%;} #menue {display: flex;justify-content: center;gap: 30px;} #anzeige {position: relative;top: -140px;border-top: 1px black solid;padding-top: 10px;width: 400px;margin: 0 auto;} #anzeige::before {content: 'RESTDRUCK: ';} #timerDisplay {position: relative;top: -120px;margin: 0 auto;width: 400px;} #startpress {position: relative;top: -100px;border-top: 1px solid lightgrey;width: 400px;margin: 0 auto;padding-top: 10px;} #startpress input {width: 200px;margin: 20px;} #p_rate {position: relative;top: -90px;margin: 0 auto;} #p_rate input {width: 200px;margin: 20px;} #startbutton {width: 25%;margin: 15px;padding: 30px;top: -80px;position: relative;} #buttonPause {width: 25%;margin: 15px;padding: 30px;top: -80px;position: relative;} #resetbutton {width: 25%;margin: 15px;padding: 30px;top: -80px;position: relative;} #menue {margin: 20px;} #timerSettings {display: none;} #timerDiv {display: initial;position: relative;top: -100px;margin: 0 auto;display: none;gap: 10px;border-top: 1px solid black;width: 400px;justify-content: center;padding: 5px;} #timerDiv label {margin: auto;margin-left: 0px;} #buttonDiv {display: flex;justify-content: center;} #minutesField {height: 50px;} #secondsField {display: inline;height: 50px;} #settingsPopup button{margin: 10px;}";
-temp += "</style>";
-temp += "<meta charset='utf-8'>";
-temp += "</head>";
-temp += "<body onload='init()'>";
-temp += "<div id='menue'>";
-temp += "<select id='functionSelect' onchange='toggleFunction()'>";
-temp += "<option value='current'>Barometer Function</option>";
-temp += "<option value='timer'>Timer Function</option>";
-temp += "</select>";
-temp += "</div>";
-temp += "<canvas id='manometer' width='400' height='400'></canvas>";
-temp += "<div id='anzeige'></div>";
-temp += "<div id='timerDisplay'>Verstrichene Zeit: 00:00</div>";
-temp += "<div id='timerDiv'>";
-temp += "<label>Timer (Min:Sec):</label>";
-temp += "</div>";
-temp += "<script>";
-temp += "// Get the canvas element and its 2D context\n";
-temp += "var canvas = document.getElementById('manometer');\n";
-temp += "var context = canvas.getContext('2d');\n";
-temp += "// Define variables for the center of the canvas, radius, and pressure range\n";
-temp += "var x = canvas.width / 2;\n";
-temp += "var y = canvas.height / 2;\n";
-temp += "var radius = canvas.width / 2 - 10;\n";
-temp += "var minBar = 0;\n";
-temp += "var maxBar = 300;\n";
-temp += "var rotBereich = 50; // Rotation range for the red section\n";
-temp += "// Initialize timer and interval-related variables\n";
-temp += "var timerId = null;\n";
-temp += "var elapsedTime = 0;\n";
-temp += "var intervalId = null;\n";
-temp += "var paused = false;\n";
-temp += "var currentPressure;\n";
-temp += "var countdownInterval; // Variable to store the interval for the countdown\n";
-temp += "var remainingTime; // Variable to store the remaining time\n";
-temp += "// FUNCTION TO DRAW THE MANOMETER ON THE CANVAS\n";
-temp += "// Function to draw the manometer gauge on the canvas, including outer circle, pressure indicators,\n";
-temp += "// inner circle, and red section to indicate low pressure.\n";
-temp += "// Utilizes variables: context, canvas, x, y, radius, minBar, maxBar, rotBereich.\n\n";
-temp += "// - context: the 2D rendering context of the canvas\n";
-temp += "// - canvas: the canvas element\n";
-temp += "// - x, y: coordinates of the center of the gauge\n";
-temp += "// - radius: radius of the gauge\n\n";
-temp += "// - minBar, maxBar: minimum and maximum pressure values\n";
-temp += "// - rotBereich: range indicating low pressure\n";
-temp += "function drawManometer() {\n";
-temp += "    // Clear the canvas\n";
-temp += "    context.clearRect(0, 0, canvas.width, canvas.height);\n";
-temp += "    // Draw outer circle\n";
-temp += "    context.beginPath();\n";
-temp += "    context.arc(x, y, radius + 10, Math.PI, 0, false);\n";
-temp += "    context.lineWidth = 2;\n";
-temp += "    context.strokeStyle = '#000000';\n";
-temp += "    context.stroke();\n";
-temp += "    // Draw pressure indicators\n";
-temp += "    context.font = '20px Arial';\n";
-temp += "    context.textAlign = 'center';\n";
-temp += "    context.textBaseline = 'middle';\n";
-temp += "    for (var i = 0; i <= 6; i++) {\n";
-temp += "        var grad = i * 50;\n";
-temp += "        var angle = (((grad / (maxBar - minBar)) * (Math.PI)) - (Math.PI));\n";
-temp += "        var xGrad = x + Math.cos(angle) * (radius - 20);\n";
-temp += "        var yGrad = y + Math.sin(angle) * (radius - 20);\n";
-temp += "        context.fillText(grad.toString(), xGrad, yGrad);\n";
-temp += "    }\n";
-temp += "    // Draw inner circle\n";
-temp += "    context.beginPath();\n";
-temp += "    context.arc(x, y, radius + 5, Math.PI, 0, false);\n";
-temp += "    context.lineWidth = 5;\n";
-temp += "    context.strokeStyle = '#000000';\n";
-temp += "    context.stroke();\n";
-temp += "    // Draw red section to indicate low pressure\n";
-temp += "    context.beginPath();\n";
-temp += "    context.arc(x, y, radius - 3, (((50 - rotBereich) / (maxBar - minBar)) * (Math.PI)) + Math.PI, ((50 / (maxBar - minBar)) * (Math.PI)) + Math.PI, false);\n";
-temp += "    context.lineWidth = 10;\n";
-temp += "    context.strokeStyle = '#FF0000';\n";
-temp += "    context.stroke();\n";
-temp += "}\n";
-temp += "// Create sliders for setting start pressure and pressure drop rate\n\n";
-temp += "var startDruckSlider = document.createElement('input');\n";
-temp += "startDruckSlider.setAttribute('type', 'range');\n";
-temp += "startDruckSlider.setAttribute('min', minBar);\n";
-temp += "startDruckSlider.setAttribute('max', maxBar);\n";
-temp += "startDruckSlider.setAttribute('value', maxBar);\n";
-temp += "startDruckSlider.setAttribute('step', '10');\n";
-temp += "startDruckSlider.setAttribute('style', 'width: 200px;');\n";
-temp += "startDruckSlider.oninput = function () {\n";
-temp += "    startDruck = parseInt(this.value);\n";
-temp += "    drawZeiger(startDruck);\n";
-temp += "};\n";
-temp += "// Create div to contain start pressure slider\n\n";
-temp += "var startDruckText = document.createTextNode('Start Pressure (bar): ');\n";
-temp += "var startDruckDiv = document.createElement('div');\n";
-temp += "startDruckDiv.setAttribute('id', 'startpress');\n";
-temp += "startDruckDiv.appendChild(startDruckText);\n";
-temp += "startDruckDiv.appendChild(startDruckSlider);\n";
-temp += "document.body.appendChild(startDruckDiv);\n";
-temp += "// Create slider for setting pressure drop rate\n\n";
-temp += "var druckAbfallSlider = document.createElement('input');\n";
-temp += "druckAbfallSlider.setAttribute('type', 'range');\n";
-temp += "druckAbfallSlider.setAttribute('min', '1');\n";
-temp += "druckAbfallSlider.setAttribute('max', '10');\n";
-temp += "druckAbfallSlider.setAttribute('value', '1');\n";
-temp += "druckAbfallSlider.setAttribute('step', '1');\n";
-temp += "druckAbfallSlider.setAttribute('style', 'width: 200px;');\n";
-temp += "druckAbfallSlider.oninput = function () {\n";
-temp += "druckAbfallRate = parseInt(this.value);\n";
-temp += "};\n";
-temp += "// Create text node for displaying pressure drop rate label\n\n";
-temp += "var druckAbfallText = document.createTextNode('Pressure Drop Rate (bar/s): ');\n";
-temp += "// Create div for containing pressure drop rate slider\n";
-temp += "var druckAbfallDiv = document.createElement('div');\n";
-temp += "druckAbfallDiv.setAttribute('id', 'p_rate');\n";
-temp += "druckAbfallDiv.appendChild(druckAbfallText);\n";
-temp += "druckAbfallDiv.appendChild(druckAbfallSlider);\n";
-temp += "document.body.appendChild(druckAbfallDiv);\n";
-temp += "// Create and append the start button\n";
-temp += "var startButton = document.createElement('button');\n";
-temp += "startButton.innerHTML = 'Start';\n";
-temp += "startButton.setAttribute('id', 'startbutton');\n";
-temp += "startButton.addEventListener('click', handleStartButtonClickBarometer);\n";
-temp += "// Create pause button (initially hidden)\n";
-temp += "var pauseButton = document.createElement('button');\n";
-temp += "pauseButton.innerHTML = 'Pause';\n";
-temp += "pauseButton.setAttribute('id', 'buttonPause');\n";
-temp += "pauseButton.style.display = 'none';\n";
-temp += "pauseButton.addEventListener('click', handlePauseButtonClick);\n";
-temp += "document.body.appendChild(pauseButton);\n";
-temp += "// Create reset button and append it to the document body\n";
-temp += "var resetButton = document.createElement('button');\n";
-temp += "resetButton.setAttribute('id', 'resetbutton');\n";
-temp += "resetButton.innerHTML = 'Reset';\n";
-temp += "resetButton.addEventListener('click', resetManometer);\n";
-temp += "document.body.appendChild(resetButton);\n";
-temp += "// Create a div to contain the buttons\n";
-temp += "var buttonDiv = document.createElement('div');\n";
-temp += "buttonDiv.setAttribute('id', 'buttonDiv');\n";
-temp += "buttonDiv.appendChild(startButton);\n";
-temp += "buttonDiv.appendChild(pauseButton);\n";
-temp += "buttonDiv.appendChild(resetButton);\n";
-temp += "document.body.appendChild(buttonDiv);\n";
-temp += "// Set the frames per second\n";
-temp += "var fps = 60;\n";
-temp += "// Set default start pressure to 300\n";
-temp += "var startDruck = 300;\n";
-temp += "// Set default pressure drop rate to 1\n";
-temp += "var druckAbfallRate = 1;\n";
-temp += "// Initialize the pressure bar\n";
-temp += "var bar = startDruck;\n";
-temp += "// Function to draw the pointer on the gauge based on the current pressure<br>\n";
-temp += "// Function to draw the pointer on the gauge based on the current pressure.\n";
-temp += "// Utilizes variables: context, canvas, x, y, radius, minBar, maxBar.\n";
-temp += "// - context: the 2D rendering context of the canvas\n";
-temp += "// - canvas: the canvas element\n";
-temp += "// - x, y: coordinates of the center of the gauge\n";
-temp += "// - radius: radius of the gauge\n";
-temp += "// - minBar, maxBar: minimum and maximum pressure values\n";
-temp += "function drawZeiger(bar) {\n";
-temp += "    var angle = (((bar - minBar) / (maxBar - minBar)) * (Math.PI)) + Math.PI;\n";
-temp += "    var xZeiger = x + Math.cos(angle) * (radius - 70);\n";
-temp += "    var yZeiger = y + Math.sin(angle) * (radius - 70);\n";
-temp += "    context.beginPath();\n";
-temp += "    context.arc(x, y, radius - 65, 0, 2 * Math.PI);\n";
-temp += "    context.fillStyle = '#FFFFFF';\n";
-temp += "    context.fill();\n";
-temp += "    context.beginPath();\n";
-temp += "    context.moveTo(x, y);\n";
-temp += "    context.lineTo(xZeiger, yZeiger);\n";
-temp += "    context.lineWidth = 5;\n";
-temp += "    context.strokeStyle = '#FF0000';\n";
-temp += "    context.stroke();\n";
-temp += "    var anzeige = document.getElementById('anzeige');\n";
-temp += "    anzeige.innerHTML = bar.toFixed(2);\n";
-temp += "}\n";
-temp += "// Function to update the elapsed time display<br>\n";
-temp += "// Function to update the elapsed time display.\n";
-temp += "// Utilizes variables: elapsedTime.\n";
-temp += "// - elapsedTime: the total elapsed time in seconds\n";
-temp += "function updateElapsedTime() {\n";
-temp += "    var timeDisplay = document.getElementById('timerDisplay');\n";
-temp += "    var minutes = Math.floor(elapsedTime / 60);\n";
-temp += "    var seconds = elapsedTime % 60;\n";
-temp += "    timeDisplay.innerHTML = 'Elapsed Time: ' + (minutes < 10 ? '0' : '') + minutes + ':' + (seconds < 10 ? '0' : '') + seconds;\n";
-temp += "}\n";
-temp += "// Initialization function.\n";
-temp += "// Invokes drawManometer() and drawZeiger() functions to initialize the manometer and set the gauge pointer to the start pressure.\n";
-temp += "// Utilizes variables: startDruck.\n";
-temp += "// - startDruck: the initial pressure value\n";
-temp += "function init() {\n";
-temp += "    drawManometer();\n";
-temp += "    drawZeiger(startDruck); // Set the gauge pointer to the start pressure during initialization\n";
-temp += "}\n";
-temp += "function updateSSID() {\n";
-temp += "    fetch('/getSSID')\n";
-temp += "    .then(response => response.text())\n";
-temp += "    .then(data => {\n";
-temp += "        document.getElementById('settingsTextField').value = 'Current SSID: ' + data;\n";
-temp += "    })\n";
-temp += "    .catch(error => {\n";
-temp += "        console.error('Error:', error);\n";
-temp += "    });\n";
-temp += "}\n";
-temp += "// Function to open the settings popup.\n";
-temp += "// Creates a popup container with input field for SSID, a save button, and a hint for Wi-Fi connection.\n";
-temp += "// Utilizes variables: settingsPopup, settingsTextField.\n";
-temp += "// - settingsPopup: ID of the popup container element.\n";
-temp += "// - settingsTextField: ID of the input field for SSID.\n";
-temp += "// TODO this function listens for a click event on the 'Save' button to handle user input and calls closeSettingsPopup() to close the popup after saving. This function could benefit from adding a cancel button to close the popup without saving.\n";
-temp += "function openSettingsPopup() {\n";
-temp += "    updateSSID();\n";
-temp += "    // Creating the popup container\n";
-temp += "    var popupContainer = document.createElement('div');\n";
-temp += "    popupContainer.setAttribute('id', 'settingsPopup');\n";
-temp += "    popupContainer.style.position = 'fixed';\n";
-temp += "    popupContainer.style.top = '50%';\n";
-temp += "    popupContainer.style.left = '50%';\n";
-temp += "    popupContainer.style.transform = 'translate(-50%, -50%)';\n";
-temp += "    popupContainer.style.background = '#fff';\n";
-temp += "    popupContainer.style.padding = '20px';\n";
-temp += "    popupContainer.style.border = '2px solid #000';\n";
-temp += "    popupContainer.style.zIndex = '9999';\n";
-temp += "    popupContainer.style.height = '200px';\n";
-temp += "    // Creating the text field\n";
-temp += "    var textField = document.createElement('input');\n";
-temp += "    textField.setAttribute('type', 'text');\n";
-temp += "    textField.setAttribute('id', 'settingsTextField');\n";
-temp += "    textField.style.marginBottom = '10px';\n";
-temp += "    // Creating a label for the text field\n";
-temp += "    var label = document.createElement('label');\n";
-temp += "    label.setAttribute('for', 'settingsTextField');\n";
-temp += "    label.textContent = 'SSID: ';\n";
-temp += "    // Adding the label and text field to the popup container\n";
-temp += "    popupContainer.appendChild(label);\n";
-temp += "    popupContainer.appendChild(textField);\n";
-temp += "    updateSSID();\n";
-temp += "    // Hint for Wi-Fi connection\n";
-temp += "    var hint = document.createElement('p');\n";
-temp += "    hint.textContent = 'Note: After changing the SSID, the Wi-Fi connection must be reestablished.';\n";
-temp += "    hint.style.marginTop = '5px';\n";
-temp += "    popupContainer.appendChild(hint);\n";
-temp += "    // Creating the save button\n";
-temp += "    var saveButton = document.createElement('button');\n";
-temp += "    saveButton.innerHTML = 'Save';\n";
-temp += "    saveButton.addEventListener('click', function() {";
-temp += "    var userInput = document.getElementById('settingsTextField').value;\n";
-temp += "    // Send the SSID to the D1 Mini and restart it\n";
-temp += "    fetch('/saveSSID', {\n";
-temp += "    method: 'POST',\n";
-temp += "            headers: {'Content-Type': 'application/x-www-form-urlencoded' },";
-temp += "            body: 'ssid=' + encodeURIComponent(userInput)\n";
-temp += "        })\n";
-temp += "        .then(response => {\n";
-temp += "            if (!response.ok) {\n";
-temp += "                throw new Error('Network response was not ok');\n";
-temp += "            }\n";
-temp += "            console.log('SSID saved. Restarting...');\n";
-temp += "            // Optionally show a confirmation to the user or update the UI\n";
-temp += "            closeSettingsPopup(); // Close the popup after saving\n";
-temp += "        })\n";
-temp += "        .catch(error => {\n";
-temp += "            console.error('Error:', error);\n";
-temp += "        });\n";
-temp += "    });\n";
-temp += "// Creating the close button\n";
-temp += "    var closeButton = document.createElement('button');\n";
-temp += "    closeButton.innerHTML = 'Abbrechen';\n";
-temp += "    closeButton.addEventListener('click', function() {\n";
-temp += "        closeSettingsPopup(); // Close the popup when close button is clicked\n";
-temp += "    });\n";
-temp += "    // Adding the save and close buttons to the popup container\n";
-temp += "    popupContainer.appendChild(saveButton);\n";
-temp += "    popupContainer.appendChild(closeButton);\n";
-temp += "    // Adding the popup container to the page\n";
-temp += "    document.body.appendChild(popupContainer);\n";
-temp += "}\n";
-temp += "\n";
-temp += "// Function to close the settings popup.\n";
-temp += "// Removes the settings popup from the DOM if it exists.\n";
-temp += "// Uses variables: None.\n";
-temp += "function closeSettingsPopup() {\n";
-temp += "    var popup = document.getElementById('settingsPopup');\n";
-temp += "    if (popup) {\n";
-temp += "        popup.parentNode.removeChild(popup);\n";
-temp += "    }\n";
-temp += "}\n";
-temp += "\n";
-temp += "    // Erstellen des Einstellungen-Buttons\n";
-temp += "    var settingsButton = document.createElement('button');\n";
-temp += "    settingsButton.innerHTML = 'Einstellungen';\n";
-temp += "    settingsButton.addEventListener('click', openSettingsPopup);\n";
-temp += "    // Hinzufügen des Einstellungen-Buttons zur Menü-Div\n";
-temp += "    var menuDiv = document.getElementById('menue');\n";
-temp += "    menuDiv.appendChild(settingsButton);\n";
-temp += "\n";
-temp += "// Creating the settings button\n";
-temp += "var settingsButton = document.createElement('button');\n";
-temp += "settingsButton.innerHTML = 'Settings';\n";
-temp += "settingsButton.addEventListener('click', openSettingsPopup);\n";
-temp += "// Adding the settings button to the menu div\n";
-temp += "var menuDiv = document.getElementById('menu');\n";
-temp += "menuDiv.appendChild(settingsButton);\n";
-temp += "\n";
-temp += "// Creating the timer div\n";
-temp += "var timerDiv = document.createElement('div');\n";
-temp += "timerDiv.setAttribute('id', 'timerDiv');\n";
-temp += "timerDiv.style.display = 'none'; // Hide by default\n";
-temp += "document.body.appendChild(timerDiv);\n";
-temp += "// Function to start the countdown timer\n";
-temp += "// Function to start the countdown timer.\n";
-temp += "// Calculates the total remaining time in seconds based on the input fields for minutes and seconds.\n";
-temp += "// Calculates the steps for updating the barometer based on the total remaining time.\n";
-temp += "// Initializes variables for the current time and current bar value.\n";
-temp += "// Updates the display with the remaining time and current bar value.\n";
-temp += "// Starts the countdown interval if it's not already running.\n";
-temp += "// Updates the countdown every second, updating time, bar value, display, and pointer position.\n";
-temp += "// Stops the countdown and updates the display when the time is up.\n";
-temp += "// Uses variables: countdownInterval, paused, formatTime, drawZeiger.\n";
-temp += "function startCountdown() {\n";
-temp += "    // Minutes and seconds from input fields\n";
-temp += "    var minutes = parseInt(document.getElementById('minutesField').value);\n";
-temp += "    var seconds = parseInt(document.getElementById('secondsField').value);\n";
-temp += "    // Total remaining seconds\n";
-temp += "    var totalSeconds = minutes * 60 + seconds;\n";
-temp += "    // Starting pressure value for the bar\n";
-temp += "    var startBar = 300;\n";
-temp += "    // Calculate steps for the bar\n";
-temp += "    var steps = startBar / totalSeconds;\n";
-temp += "    // Update frequency in milliseconds\n";
-temp += "    var updateInterval = 1000;\n";
-temp += "    // Initial time for the countdown\n";
-temp += "    var currentTime = totalSeconds;\n";
-temp += "    // Initialize pointer\n";
-temp += "    var currentBarValue = startBar;\n";
-temp += "    // Start value for the display\n";
-temp += "    document.getElementById('timerDisplay').innerHTML = 'Remaining Time: ' + formatTime(currentTime);\n";
-temp += "    document.getElementById('anzeige').innerHTML = 'Bar: ' + Math.round(currentBarValue);\n";
-temp += "    // If a countdown is already running, don't start again\n";
-temp += "    if (!countdownInterval) {\n";
-temp += "        // Start countdown\n";
-temp += "        countdownInterval = setInterval(function() {\n";
-temp += "            // If not paused, update the countdown\n";
-temp += "            if (!paused) {\n";
-temp += "                // Update time\n";
-temp += "                currentTime--;\n";
-temp += "                // Update bar\n";
-temp += "                currentBarValue -= steps;\n";
-temp += "                // Update display\n";
-temp += "                document.getElementById('timerDisplay').innerHTML = 'Remaining Time: ' + formatTime(currentTime);\n";
-temp += "                document.getElementById('anzeige').innerHTML = 'Bar: ' + Math.round(currentBarValue);\n";
-temp += "                // Update pointer\n";
-temp += "                drawZeiger(currentBarValue);\n";
-temp += "                // If time is up, stop the countdown\n";
-temp += "                if (currentTime <= 0) {\n";
-temp += "                    clearInterval(countdownInterval);\n";
-temp += "                    document.getElementById('timerDisplay').innerHTML = 'Elapsed Time: ' + formatTime(0);\n";
-temp += "                    document.getElementById('anzeige').innerHTML = 'Bar: 0';\n";
-temp += "                    drawZeiger(0);\n";
-temp += "                }\n";
-temp += "            }\n";
-temp += "        }, updateInterval);\n";
-temp += "    }\n";
-temp += "}\n";
-temp += "\n";
-temp += "// Function to format time in MM:SS format.\n";
-temp += "// Converts total seconds into minutes and remaining seconds, then returns the formatted time.\n";
-temp += "// Uses the pad function to ensure two-digit formatting.\n";
-temp += "// Uses the pad function.\n";
-temp += "function formatTime(seconds) {\n";
-temp += "    var minutes = Math.floor(seconds / 60);\n";
-temp += "    var remainingSeconds = seconds % 60;\n";
-temp += "    return pad(minutes) + ':' + pad(remainingSeconds);\n";
-temp += "}\n";
-temp += "\n";
-temp += "// Function to pad single-digit numbers with leading zeros.\n";
-temp += "// Adds a leading zero to single-digit numbers to ensure two-digit formatting.\n";
-temp += "// Used by the formatTime function.\n";
-temp += "function pad(val) {\n";
-temp += "    return val < 10 ? '0' + val : val;\n";
-temp += "}\n";
-temp += "\n";
-temp += "// Function to pause the countdown.\n";
-temp += "// Sets the paused flag to true, indicating the countdown is paused.\n";
-temp += "function pauseCountdown() {\n";
-temp += "    paused = true;\n";
-temp += "}\n";
-temp += "\n";
-temp += "// Function to resume the countdown.\n";
-temp += "// Sets the paused flag to false, indicating the countdown is resumed.\n";
-temp += "function resumeCountdown() {\n";
-temp += "    paused = false;\n";
-temp += "}\n";
-temp += "// Event handler for the pause button click.\n";
-temp += "// Stops the countdown or barometer function based on the current state.\n";
-temp += "// If the button's text is 'Pause', it changes it to 'Resume' and saves the current pressure value.\n";
-temp += "// If the button's text is 'Resume', it changes it back to 'Pause' and resumes the barometer function with the saved pressure value.\n";
-temp += "function handlePauseButtonClick() {\n";
-temp += "    var pauseButton = document.getElementById('buttonPause');\n";
-temp += "    clearInterval(intervalId); // Stop countdown or barometer function\n";
-temp += "    if (pauseButton.innerHTML === 'Pause') {\n";
-temp += "        pauseButton.innerHTML = 'Resume';\n";
-temp += "        // Save the current pressure value\n";
-temp += "        currentPressure = bar;\n";
-temp += "    } else {\n";
-temp += "        pauseButton.innerHTML = 'Pause';\n";
-temp += "        // Resume the barometer function with the saved pressure value\n";
-temp += "        intervalId = setInterval(function () {\n";
-temp += "            if (!paused) {\n";
-temp += "                elapsedTime++;\n";
-temp += "                bar -= druckAbfallRate / fps;\n";
-temp += "                if (bar < minBar) {\n";
-temp += "                    bar = minBar;\n";
-temp += "                    clearInterval(intervalId);\n";
-temp += "                }\n";
-temp += "                drawZeiger(bar);\n";
-temp += "                updateElapsedTime();\n";
-temp += "            }\n";
-temp += "        }, 1000 / fps);\n";
-temp += "    }\n";
-temp += "}\n";
-temp += "\n";
-temp += "// Function to update the display and bar based on the remaining time and start pressure.\n";
-temp += "// It calculates the remaining time in seconds and updates the timer display.\n";
-temp += "// Then it calculates the bar value based on the remaining time and the start pressure, and updates the barometer display accordingly.\n";
-temp += "function updateDisplayAndBar(seconds, startBar) {\n";
-temp += "    // Update display\n";
-temp += "    document.getElementById('timerDisplay').innerHTML = 'Remaining Time: ' + formatTime(seconds);\n";
-temp += "    // Update bar\n";
-temp += "    var bar = startBar * (seconds / (parseInt(document.getElementById('minutesField').value) * 60));\n";
-temp += "    drawZeiger(bar);\n";
-temp += "    document.getElementById('anzeige').innerHTML = 'Bar: ' + Math.round(bar);\n";
-temp += "}\n";
-temp += "\n";
-temp += "// Function to reset the timer to its initial state.\n";
-temp += "// It calculates the remaining time based on the values entered in the input fields for minutes and seconds.\n";
-temp += "// Then it stops the countdown, clears the interval, and resets the display and event listeners for the start and pause buttons.\n";
-temp += "// Finally, it resets the pointer on the gauge to the default pressure value.\n";
-temp += "function resetTimer() {\n";
-temp += "    var minutes = parseInt(document.getElementById('minutesField').value);\n";
-temp += "    var seconds = parseInt(document.getElementById('secondsField').value);\n";
-temp += "    remainingTime = minutes * 60 + seconds;\n";
-temp += "    stopCountdown();\n";
-temp += "    clearInterval(intervalId);\n";
-temp += "    var pauseButton = document.getElementById('buttonPause');\n";
-temp += "    var startButton = document.getElementById('startbutton');\n";
-temp += "    pauseButton.style.display = 'none';\n";
-temp += "    startButton.style.display = 'block';\n";
-temp += "    pauseButton.innerHTML = 'Pause';\n";
-temp += "    startButton.removeEventListener('click', handleStartButtonClickTimer);\n";
-temp += "    startButton.addEventListener('click', handleStartButtonClickTimer);\n";
-temp += "    clearInterval(countdownInterval);\n";
-temp += "    countdownInterval = null;\n";
-temp += "    // Reset for the pointer\n";
-temp += "    drawZeiger(300);\n";
-temp += "}\n";
-temp += "\n";
-temp += "// Function to reset the manometer to its initial state.\n";
-temp += "// It resets the display for the manometer and the elapsed time to their initial values.\n";
-temp += "// Then it resets the internal bar value to the default pressure value and updates the pointer on the gauge accordingly.\n";
-temp += "// If the countdown is running, it stops it and hides the pause button while showing the start button.\n";
-temp += "function resetManometer() {\n";
-temp += "    // Reset the display to the initial value\n";
-temp += "    var timerDisplay = document.getElementById('timerDisplay');\n";
-temp += "    timerDisplay.innerHTML = 'Elapsed Time: 00:00';\n";
-temp += "    // Reset the display for the manometer to the initial value\n";
-temp += "    var anzeige = document.getElementById('anzeige');\n";
-temp += "    anzeige.innerHTML = startDruck;\n";
-temp += "    // Reset the internal bar value to the initial value\n";
-temp += "    bar = startDruck;\n";
-temp += "    // Set pointer to the start pressure\n";
-temp += "    drawZeiger(startDruck);\n";
-temp += "    // If the countdown is running, stop it\n";
-temp += "    stopCountdown();\n";
-temp += "    // Reset and hide the pause button\n";
-temp += "    var pauseButton = document.getElementById('buttonPause');\n";
-temp += "    pauseButton.innerHTML = 'Pause';\n";
-temp += "    pauseButton.style.display = 'none';\n";
-temp += "    // Show the start button\n";
-temp += "    var startButton = document.getElementById('startbutton');\n";
-temp += "    startButton.style.display = 'block';\n";
-temp += "}\n";
-temp += "// Function to handle the click event of the start button in the timer option.\n";
-temp += "// It initiates the countdown timer when the start button is clicked.\n";
-temp += "// It hides the start button and displays the pause button with its text set to 'Pause'.\n";
-temp += "// It adds an event listener to the pause button to handle its click event.\n";
-temp += "function handleStartButtonClickTimer() {\n";
-temp += "    // Logic for the start button click event in the timer option\n";
-temp += "    startCountdown(); // Example: startCountdown();\n";
-temp += "\n";
-temp += "    // Change the start button to a pause button\n";
-temp += "    var startButton = document.getElementById('startbutton');\n";
-temp += "    startButton.style.display = 'none'; // Hide start button\n";
-temp += "\n";
-temp += "    var pauseButton = document.getElementById('buttonPause');\n";
-temp += "    pauseButton.style.display = 'block'; // Show pause button\n";
-temp += "    pauseButton.innerHTML = 'Pause'; // Reset text to 'Pause'\n";
-temp += "\n";
-temp += "    // Add event listener for the pause button\n";
-temp += "    pauseButton.removeEventListener('click', handlePauseButtonTimer);\n";
-temp += "    pauseButton.addEventListener('click', handlePauseButtonTimer);\n";
-temp += "}\n";
-temp += "\n";
-temp += "// Function to handle the click event of the start button in the barometer option.\n";
-temp += "// It resets the manometer to its initial state.\n";
-temp += "// It retrieves the start pressure value and pressure drop rate from sliders.\n";
-temp += "// It resets the elapsed time.\n";
-temp += "// It starts the barometer function with a setInterval call to update pressure values.\n";
-temp += "// It hides the start button and displays the pause button with its text set to 'Pause'.\n";
-temp += "// It updates the event listener for the pause button to handle its click event.\n";
-temp += "function handleStartButtonClickBarometer() {\n";
-temp += "    // First reset the manometer\n";
-temp += "    resetManometer();\n";
-temp += "    // Start value for pressure\n";
-temp += "    var startDruck = parseFloat(startDruckSlider.value);\n";
-temp += "    // Pressure drop rate\n";
-temp += "    var druckAbfallRate = parseFloat(druckAbfallSlider.value);\n";
-temp += "    // Reset elapsed time\n";
-temp += "    elapsedTime = 0;\n";
-temp += "    // Start the barometer function\n";
-temp += "    intervalId = setInterval(function () {\n";
-temp += "        if (!paused) {\n";
-temp += "            elapsedTime++;\n";
-temp += "            bar -= druckAbfallRate / fps;\n";
-temp += "            if (bar < minBar) {\n";
-temp += "                bar = minBar;\n";
-temp += "                clearInterval(intervalId);\n";
-temp += "            }\n";
-temp += "            drawZeiger(bar);\n";
-temp += "            updateElapsedTime();\n";
-temp += "        }\n";
-temp += "    }, 1000 / fps);\n";
-temp += "    // Change the start button to a pause button\n";
-temp += "    var startButton = document.getElementById('startbutton');\n";
-temp += "    startButton.style.display = 'none'; // Hide start button\n";
-temp += "    var pauseButton = document.getElementById('buttonPause');\n";
-temp += "    pauseButton.style.display = 'block'; // Show pause button\n";
-temp += "    // Reset the pause button to 'Pause'\n";
-temp += "    pauseButton.innerHTML = 'Pause';\n";
-temp += "    // Update event listener for the pause button\n";
-temp += "    pauseButton.removeEventListener('click', handlePauseButtonClick);\n";
-temp += "    pauseButton.addEventListener('click', handlePauseButtonClick);\n";
-temp += "}\n";
-temp += "// Function to stop the countdown.\n";
-temp += "// It clears the interval to stop the countdown.\n";
-temp += "// It resets the display to show 'Remaining Time: 00:00'.\n";
-temp += "function stopCountdown() {\n";
-temp += "    clearInterval(intervalId); // Clear interval to stop the countdown\n";
-temp += "    var timerDisplay = document.getElementById('timerDisplay');\n";
-temp += "    timerDisplay.innerHTML = 'Remaining Time: 00:00'; // Reset display to zero\n";
-temp += "}\n";
-temp += "// Function for handling the click event of the pause button in the timer option.\n";
-temp += "// If the button text is 'Pause', it pauses the countdown timer and changes the button text to 'Continue'.\n";
-temp += "// If the button text is 'Continue', it resumes the countdown timer and changes the button text back to 'Pause'.\n";
-temp += "function handlePauseButtonTimer() {\n";
-temp += "    // Logic for the pause button click event in the timer option\n";
-temp += "    var pauseButton = document.getElementById('buttonPause');\n";
-temp += "    if (pauseButton.innerHTML === 'Pause') {\n";
-temp += "        // Pause the timer\n";
-temp += "        pauseCountdown(); // Pause timer\n";
-temp += "        pauseButton.innerHTML = 'Continue';\n";
-temp += "    } else {\n";
-temp += "        // Resume the timer\n";
-temp += "        resumeCountdown(); // Resume timer\n";
-temp += "        pauseButton.innerHTML = 'Pause';\n";
-temp += "    }\n";
-temp += "}\n";
-temp += "// Function for calculating the remaining time based on the values entered in the minutes and seconds input fields.\n";
-temp += "// Returns the total remaining time in seconds.\n";
-temp += "function calculateRemainingTime() {\n";
-temp += "    // Read minutes and seconds from input fields\n";
-temp += "    var minutes = parseInt(document.getElementById('minutesField').value);\n";
-temp += "    var seconds = parseInt(document.getElementById('secondsField').value);\n";
-temp += "    // Calculate total remaining seconds\n";
-temp += "    return minutes * 60 + seconds;\n";
-temp += "}\n";
-temp += "// Function to toggle between timer and barometer options based on the selected value in the dropdown menu.\n";
-temp += "// Retrieves DOM elements for necessary components such as the function select dropdown, timer div, input fields, and buttons.\n";
-temp += "// Determines the selected value from the dropdown menu.\n";
-temp += "// If 'timer' is selected:\n";
-temp += "// - Displays timer input fields (minutes and seconds) if they don't already exist.\n";
-temp += "// - Clears any existing interval for countdown.\n";
-temp += "// - Sets the display style of timer related elements to show them.\n";
-temp += "// - Hides barometer related elements.\n";
-temp += "// - Updates event listeners for start, reset, and pause buttons to handle timer functionality.\n";
-temp += "// If 'barometer' is selected:\n";
-temp += "// - Hides timer input fields.\n";
-temp += "// - Shows barometer related elements.\n";
-temp += "// - Stops the countdown if it's running.\n";
-temp += "// - Updates event listeners for start, reset, and pause buttons to handle barometer functionality.\n";
-temp += "// Ensures the start button is visible regardless of the selected option.\n";
-temp += "function toggleFunction() {\n";
-temp += "    // Retrieve DOM elements\n";
-temp += "    var functionSelect = document.getElementById('functionSelect'),\n";
-temp += "        selectedValue = functionSelect.options[functionSelect.selectedIndex].value,\n";
-temp += "        timerDiv = document.getElementById('timerDiv'),\n";
-temp += "        minutesField = document.getElementById('minutesField'),\n";
-temp += "        secondsField = document.getElementById('secondsField'),\n";
-temp += "        startButton = document.getElementById('startbutton'),\n";
-temp += "        resetButton = document.getElementById('resetbutton'),\n";
-temp += "        pauseButton = document.getElementById('buttonPause');\n";
-temp += "    // Check the selected option value\n";
-temp += "    if (selectedValue === 'timer') {\n";
-temp += "        // Display timer fields\n";
-temp += "        if (!minutesField) {\n";
-temp += "            minutesField = document.createElement('input');\n";
-temp += "            minutesField.setAttribute('type', 'number');\n";
-temp += "            minutesField.setAttribute('id', 'minutesField');\n";
-temp += "            minutesField.setAttribute('placeholder', 'Min');\n";
-temp += "            minutesField.setAttribute('min', '0');\n";
-temp += "            minutesField.setAttribute('max', '59');\n";
-temp += "            minutesField.setAttribute('value', '5');\n";
-temp += "            minutesField.style.display = 'inline';\n";
-temp += "            timerDiv.appendChild(minutesField);\n";
-temp += "        }\n";
-temp += "        if (!secondsField) {\n";
-temp += "            secondsField = document.createElement('input');\n";
-temp += "            secondsField.setAttribute('type', 'number');\n";
-temp += "            secondsField.setAttribute('id', 'secondsField');\n";
-temp += "            secondsField.setAttribute('placeholder', 'Sec');\n";
-temp += "            secondsField.setAttribute('min', '0');\n";
-temp += "            secondsField.setAttribute('max', '59');\n";
-temp += "            secondsField.setAttribute('value', '0');\n";
-temp += "            secondsField.style.display = 'inline';\n";
-temp += "            timerDiv.appendChild(secondsField);\n";
-temp += "        }\n";
-temp += "        clearInterval(intervalId);\n";
-temp += "        timerDiv.style.display = 'flex';\n";
-temp += "        document.getElementById('p_rate').style.display = 'none';\n";
-temp += "        document.getElementById('startpress').style.display = 'none';\n";
-temp += "        startButton.removeEventListener('click', handleStartButtonClickBarometer);\n";
-temp += "        startButton.addEventListener('click', handleStartButtonClickTimer);\n";
-temp += "        resetButton.removeEventListener('click', resetManometer);\n";
-temp += "        resetButton.addEventListener('click', resetTimer); // Assign resetTimer here\n";
-temp += "        pauseButton.removeEventListener('click', handlePauseButtonClick);\n";
-temp += "        pauseButton.addEventListener('click', handlePauseButtonTimer);\n";
-temp += "    } else {\n";
-temp += "        // Display barometer fields\n";
-temp += "        timerDiv.style.display = 'none';\n";
-temp += "        document.getElementById('p_rate').style.display = 'block';\n";
-temp += "        document.getElementById('startpress').style.display = 'block';\n";
-temp += "        stopCountdown();\n";
-temp += "        startButton.removeEventListener('click', handleStartButtonClickTimer);\n";
-temp += "        startButton.addEventListener('click', handleStartButtonClickBarometer);\n";
-temp += "        resetButton.removeEventListener('click', resetTimer); // Remove resetTimer here\n";
-temp += "        resetButton.addEventListener('click', resetManometer);\n";
-temp += "        pauseButton.removeEventListener('click', handlePauseButtonTimer);\n";
-temp += "        pauseButton.addEventListener('click', handlePauseButtonClick);\n";
-temp += "    }\n";
-temp += "    startButton.style.display = 'block'; // Ensure start button is visible\n";
-temp += "}\n";
-temp += "</script>";
-temp += "</body>";
-temp += "</html>";
+    // Initialize timer and interval-related variables
+    var timerId = null;
+    var elapsedTime = 0;
+    var intervalId = null;
+    var paused = false;
+    var currentPressure;
+    var countdownInterval; // Variable to store the interval for the countdown
+    var remainingTime; // Variable to store the remaining time
+
+    // Set the frames per second
+    var fps = 60;
+
+    // Set default start pressure to 300
+    var startDruck = 300;
+
+    // Set default pressure drop rate to 1
+    var druckAbfallRate = 1;
+
+    // Initialize the pressure bar
+    var bar = startDruck;
+
+    // FUNCTION TO DRAW THE MANOMETER ON THE CANVAS
+    // Function to draw the manometer gauge on the canvas, including outer circle, pressure indicators,
+    // inner circle, and red section to indicate low pressure.
+    // Utilizes variables: context, canvas, x, y, radius, minBar, maxBar, rotBereich.
+    // - context: the 2D rendering context of the canvas
+    // - canvas: the canvas element
+    // - x, y: coordinates of the center of the gauge
+    // - radius: radius of the gauge
+    // - minBar, maxBar: minimum and maximum pressure values
+    // - rotBereich: range indicating low pressure
+    function drawManometer() {
+        // Clear the canvas
+        context.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Draw outer circle
+        context.beginPath();
+        context.arc(x, y, radius + 10, Math.PI, 0, false);
+        context.lineWidth = 2;
+        context.strokeStyle = '#000000';
+        context.stroke();
+
+        // Draw pressure indicators
+        context.font = "20px Arial";
+        context.textAlign = "center";
+        context.textBaseline = "middle";
+        for (var i = 0; i <= 6; i++) {
+            var grad = i * 50;
+            var angle = (((grad / (maxBar - minBar)) * (Math.PI)) - (Math.PI));
+            var xGrad = x + Math.cos(angle) * (radius - 20);
+            var yGrad = y + Math.sin(angle) * (radius - 20);
+            context.fillText(grad.toString(), xGrad, yGrad);
+        }
+
+        // Draw inner circle
+        context.beginPath();
+        context.arc(x, y, radius + 5, Math.PI, 0, false);
+        context.lineWidth = 5;
+        context.strokeStyle = '#000000';
+        context.stroke();
+
+        // Draw red section to indicate low pressure
+        context.beginPath();
+        context.arc(x, y, radius - 3, (((50 - rotBereich) / (maxBar - minBar)) * (Math.PI)) + Math.PI, ((50 / (maxBar - minBar)) * (Math.PI)) + Math.PI, false);
+        context.lineWidth = 10;
+        context.strokeStyle = '#FF0000';
+        context.stroke();
+    }
+
+    // Function to draw the pointer on the gauge based on the current pressure.
+    // Utilizes variables: context, canvas, x, y, radius, minBar, maxBar.
+    // - context: the 2D rendering context of the canvas
+    // - canvas: the canvas element
+    // - x, y: coordinates of the center of the gauge
+    // - radius: radius of the gauge
+    // - minBar, maxBar: minimum and maximum pressure values
+    function drawZeiger(bar) {
+        var angle = (((bar - minBar) / (maxBar - minBar)) * (Math.PI)) + Math.PI;
+        var xZeiger = x + Math.cos(angle) * (radius - 70);
+        var yZeiger = y + Math.sin(angle) * (radius - 70);
+        context.beginPath();
+        context.arc(x, y, radius - 65, 0, 2 * Math.PI);
+        context.fillStyle = '#FFFFFF';
+        context.fill();
+        context.beginPath();
+        context.moveTo(x, y);
+        context.lineTo(xZeiger, yZeiger);
+        context.lineWidth = 5;
+        context.strokeStyle = '#FF0000';
+        context.stroke();
+        var anzeige = document.getElementById("anzeige");
+        anzeige.innerHTML = bar.toFixed(2);
+    }
+
+    // Function to update the elapsed time display.
+    // Utilizes variables: elapsedTime.
+    // - elapsedTime: the total elapsed time in seconds
+    function updateElapsedTime() {
+        var timeDisplay = document.getElementById("timerDisplay");
+        var minutes = Math.floor(elapsedTime / 60);
+        var seconds = elapsedTime % 60;
+        timeDisplay.innerHTML = "Elapsed Time: " + (minutes < 10 ? "0" : "") + minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
+    }
+
+    // Initialization function.
+    // Invokes drawManometer() and drawZeiger() functions to initialize the manometer and set the gauge pointer to the start pressure.
+    // Utilizes variables: startDruck.
+    // - startDruck: the initial pressure value
+    function init() {
+        drawManometer();
+        drawZeiger(startDruck); // Set the gauge pointer to the start pressure during initialization
+    }
+
+    // Function to update the SSID
+    function updateSSID() {
+        fetch("/getSSID")
+        .then(response => response.text())
+        .then(data => {
+            document.getElementById("settingsTextField").value = "Current SSID: " + data;
+        })
+        .catch(error => {
+            console.error('Error:', error);
+        });
+    }
+
+    // Function to open the settings popup.
+    // Creates a popup container with input field for SSID, a save button, and a hint for Wi-Fi connection.
+    // Utilizes variables: settingsPopup, settingsTextField.
+    // - settingsPopup: ID of the popup container element.
+    // - settingsTextField: ID of the input field for SSID.
+    function openSettingsPopup() {
+        updateSSID();
+
+        // Creating the popup container
+        var popupContainer = document.createElement("div");
+        popupContainer.setAttribute("id", "settingsPopup");
+        popupContainer.style.position = "fixed";
+        popupContainer.style.top = "50%";
+        popupContainer.style.left = "50%";
+        popupContainer.style.transform = "translate(-50%, -50%)";
+        popupContainer.style.background = "#fff";
+        popupContainer.style.padding = "20px";
+        popupContainer.style.border = "2px solid #000";
+        popupContainer.style.zIndex = "9999";
+        popupContainer.style.height = "200px";
+
+        // Creating the text field
+        var textField = document.createElement("input");
+        textField.setAttribute("type", "text");
+        textField.setAttribute("id", "settingsTextField");
+        textField.style.marginBottom = "10px";
+
+        // Creating a label for the text field
+        var label = document.createElement("label");
+        label.setAttribute("for", "settingsTextField");
+        label.textContent = "SSID: ";
+
+        // Adding the label and text field to the popup container
+        popupContainer.appendChild(label);
+        popupContainer.appendChild(textField);
+
+        // Hint for Wi-Fi connection
+        var hint = document.createElement("p");
+        hint.textContent = "Note: After changing the SSID, the Wi-Fi connection must be reestablished.";
+        hint.style.marginTop = "5px";
+        popupContainer.appendChild(hint);
+
+        // Creating the save button
+        var saveButton = document.createElement("button");
+        saveButton.innerHTML = "Save";
+        saveButton.addEventListener("click", function() {
+            var userInput = document.getElementById("settingsTextField").value;
+            // Send the SSID to the D1 Mini and restart it
+            fetch("/saveSSID", {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: 'ssid=' + encodeURIComponent(userInput)
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                console.log('SSID saved. Restarting...');
+                // Optionally show a confirmation to the user or update the UI
+                closeSettingsPopup(); // Close the popup after saving
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+        });
+        popupContainer.appendChild(saveButton);
+
+        // Append the popup container to the body
+        document.body.appendChild(popupContainer);
+    }
+
+    // Function to close the settings popup
+    function closeSettingsPopup() {
+        var popup = document.getElementById("settingsPopup");
+        if (popup) {
+            document.body.removeChild(popup);
+        }
+    }
+
+    // Create sliders for setting start pressure and pressure drop rate
+    var startDruckSlider = document.createElement("input");
+    startDruckSlider.setAttribute("type", "range");
+    startDruckSlider.setAttribute("min", minBar);
+    startDruckSlider.setAttribute("max", maxBar);
+    startDruckSlider.setAttribute("value", maxBar);
+    startDruckSlider.setAttribute("step", "10");
+    startDruckSlider.setAttribute("style", "width: 200px;");
+    startDruckSlider.oninput = function() {
+        startDruck = parseInt(this.value);
+        drawZeiger(startDruck);
+    };
+
+    // Create div to contain start pressure slider
+    var startDruckText = document.createTextNode("Start Pressure (bar): ");
+    var startDruckDiv = document.createElement("div");
+    startDruckDiv.setAttribute("id", "startpress");
+    startDruckDiv.appendChild(startDruckText);
+    startDruckDiv.appendChild(startDruckSlider);
+    document.body.appendChild(startDruckDiv);
+
+    // Create slider for setting pressure drop rate
+    var druckAbfallSlider = document.createElement("input");
+    druckAbfallSlider.setAttribute("type", "range");
+    druckAbfallSlider.setAttribute("min", "0,208");
+    druckAbfallSlider.setAttribute("max", "10");
+    druckAbfallSlider.setAttribute("value", "0,208");
+    druckAbfallSlider.setAttribute("step", "1");
+    druckAbfallSlider.setAttribute("style", "width: 200px;");
+    druckAbfallSlider.oninput = function() {
+        druckAbfallRate = parseInt(this.value);
+    };
+
+    / Create text node for displaying pressure drop rate label
+    var druckAbfallText = document.createTextNode("Pressure Drop Rate (bar/s): ");
     
-    // Send HTML response
-    server.send(200, "text/html", temp);
+    // Create div for containing pressure drop rate slider
+    var druckAbfallDiv = document.createElement("div");
+    druckAbfallDiv.setAttribute("id", "p_rate");
+    druckAbfallDiv.appendChild(druckAbfallText);
+    druckAbfallDiv.appendChild(druckAbfallSlider);
+    document.body.appendChild(druckAbfallDiv);
 
-    // Clear temp to save memory
-    temp = "";
+    // Create and append the start button
+    var startButton = document.createElement("button");
+    startButton.innerHTML = "Start";
+    startButton.setAttribute("id", "startbutton");
+    startButton.addEventListener("click", handleStartButtonClickBarometer); // Add event listener
+    document.body.appendChild(startButton);
+
+    // Create pause button (initially hidden)
+    var pauseButton = document.createElement("button");
+    pauseButton.innerHTML = "Pause";
+    pauseButton.setAttribute("id", "buttonPause");
+    pauseButton.style.display = "none"; // Initially hidden
+    pauseButton.addEventListener("click", handlePauseButtonClick); // Add event listener
+    document.body.appendChild(pauseButton);
+
+    // Create reset button and append it to the document body
+    var resetButton = document.createElement("button");
+    resetButton.setAttribute("id", "resetbutton");
+    resetButton.innerHTML = "Reset";
+    resetButton.addEventListener("click", resetManometer); // Add event listener
+    document.body.appendChild(resetButton);
+
+    // Create a div to contain the buttons
+    var buttonDiv = document.createElement("div");
+    buttonDiv.setAttribute("id", "buttonDiv"); // Set ID for the div
+    buttonDiv.appendChild(startButton);
+    buttonDiv.appendChild(pauseButton);
+    buttonDiv.appendChild(resetButton);
+    document.body.appendChild(buttonDiv); // Append the div at the end of the body
+    
+    // Set the frames per second
+var fps = 60;
+
+// Set default start pressure to 300
+var startDruck = 300;
+
+// Set default pressure drop rate to 1
+var druckAbfallRate = 1;
+
+// Initialize the pressure bar
+var bar = startDruck;
+
+// Function to draw the pointer on the gauge based on the current pressure
+// Utilizes variables: context, canvas, x, y, radius, minBar, maxBar
+// - context: the 2D rendering context of the canvas
+// - canvas: the canvas element
+// - x, y: coordinates of the center of the gauge
+// - radius: radius of the gauge
+// - minBar, maxBar: minimum and maximum pressure values
+function drawZeiger(bar) {
+    var angle = (((bar - minBar) / (maxBar - minBar)) * (Math.PI)) + Math.PI;
+    var xZeiger = x + Math.cos(angle) * (radius - 70);
+    var yZeiger = y + Math.sin(angle) * (radius - 70);
+    context.beginPath();
+    context.arc(x, y, radius - 65, 0, 2 * Math.PI);
+    context.fillStyle = '#FFFFFF';
+    context.fill();
+    context.beginPath();
+    context.moveTo(x, y);
+    context.lineTo(xZeiger, yZeiger);
+    context.lineWidth = 5;
+    context.strokeStyle = '#FF0000';
+    context.stroke();
+    var anzeige = document.getElementById("anzeige");
+    anzeige.innerHTML = bar.toFixed(2);
 }
 
+// Function to update the elapsed time display
+// Utilizes variables: elapsedTime
+// - elapsedTime: the total elapsed time in seconds
+function updateElapsedTime() {
+    var timeDisplay = document.getElementById("timerDisplay");
+    var minutes = Math.floor(elapsedTime / 60);
+    var seconds = elapsedTime % 60;
+    timeDisplay.innerHTML = "Elapsed Time: " + (minutes < 10 ? "0" : "") + minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
+}
 
-// Function to initialize HTTP server and handle various routes
+// Initialization function
+// Invokes drawManometer() and drawZeiger() functions to initialize the manometer and set the gauge pointer to the start pressure
+// Utilizes variables: startDruck
+// - startDruck: the initial pressure value
+function init() {
+    drawManometer();
+    drawZeiger(startDruck); // Set the gauge pointer to the start pressure during initialization
+}
+
+function updateSSID() {
+    fetch("/getSSID")
+    .then(response => response.text())
+    .then(data => {
+        document.getElementById("settingsTextField").value = "Current SSID: " + data;
+    })
+    .catch(error => {
+        console.error('Error:', error);
+    });
+}
+
+// Erstellen des Einstellungen-Buttons
+var settingsButton = document.createElement("button");
+settingsButton.innerHTML = "Einstellungen";
+settingsButton.addEventListener("click", openSettingsPopup);
+
+// Hinzufügen des Einstellungen-Buttons zur Menü-Div
+var menuDiv = document.getElementById("menue");
+menuDiv.appendChild(settingsButton);
+
+// Creating the settings button
+var settingsButton = document.createElement("button");
+settingsButton.innerHTML = "Settings";
+settingsButton.addEventListener("click", openSettingsPopup);
+
+// Adding the settings button to the menu div
+var menuDiv = document.getElementById("menu");
+menuDiv.appendChild(settingsButton);
+
+// Function to open the settings popup
+// Creates a popup container with input field for SSID, a save button, and a hint for Wi-Fi connection
+// Utilizes variables: settingsPopup, settingsTextField
+// - settingsPopup: ID of the popup container element
+// - settingsTextField: ID of the input field for SSID
+// TODO: this function listens for a click event on the "Save" button to handle user input and calls closeSettingsPopup() to close the popup after saving. This function could benefit from adding a cancel button to close the popup without saving.
+function openSettingsPopup() {
+    updateSSID();
+
+    // Creating the popup container
+    var popupContainer = document.createElement("div");
+    popupContainer.setAttribute("id", "settingsPopup");
+    popupContainer.style.position = "fixed";
+    popupContainer.style.top = "50%";
+    popupContainer.style.left = "50%";
+    popupContainer.style.transform = "translate(-50%, -50%)";
+    popupContainer.style.background = "#fff";
+    popupContainer.style.padding = "20px";
+    popupContainer.style.border = "2px solid #000";
+    popupContainer.style.zIndex = "9999";
+    popupContainer.style.height = "200px";
+
+    // Creating the text field
+    var textField = document.createElement("input");
+    textField.setAttribute("type", "text");
+    textField.setAttribute("id", "settingsTextField");
+    textField.style.marginBottom = "10px";
+
+    // Creating a label for the text field
+    var label = document.createElement("label");
+    label.setAttribute("for", "settingsTextField");
+    label.textContent = "SSID: ";
+
+    // Adding the label and text field to the popup container
+    popupContainer.appendChild(label);
+    popupContainer.appendChild(textField);
+    updateSSID()
+
+    // Hint for Wi-Fi connection
+    var hint = document.createElement("p");
+    hint.textContent = "Note: After changing the SSID, the Wi-Fi connection must be reestablished.";
+    hint.style.marginTop = "5px";
+    popupContainer.appendChild(hint);
+
+    // Creating the save button
+    var saveButton = document.createElement("button");
+    saveButton.innerHTML = "Save"; 
+
+    // Adding the save and close buttons to the popup container
+    popupContainer.appendChild(saveButton);
+    popupContainer.appendChild(closeButton);  
+};
+// Creating the close button
+var closeButton = document.createElement("button");
+closeButton.innerHTML = "Abbrechen";
+closeButton.addEventListener("click", function() {
+    closeSettingsPopup(); // Close the popup when close button is clicked
+});
+
+// Adding the popup container to the page
+document.body.appendChild(popupContainer);
+
+// Function to close the settings popup.
+// Removes the settings popup from the DOM if it exists.
+// Uses variables: None.
+function closeSettingsPopup()
+{
+    var popup = document.getElementById("settingsPopup");
+    if (popup)
+    {
+        popup.parentNode.removeChild(popup);
+    }
+}
+
+// Creating the timer div
+var timerDiv = document.createElement("div");
+timerDiv.setAttribute("id", "timerDiv");
+timerDiv.style.display = "none"; // Hide by default
+document.body.appendChild(timerDiv);
+
+// Function to start the countdown timer
+// Function to start the countdown timer.
+// Calculates the total remaining time in seconds based on the input fields for minutes and seconds.
+// Calculates the steps for updating the barometer based on the total remaining time.
+// Initializes variables for the current time and current bar value.
+// Updates the display with the remaining time and current bar value.
+// Starts the countdown interval if it's not already running.
+// Updates the countdown every second, updating time, bar value, display, and pointer position.
+// Stops the countdown and updates the display when the time is up.
+// Uses variables: countdownInterval, paused, formatTime, drawZeiger.
+function startCountdown()
+{
+    // Minutes and seconds from input fields
+    var minutes = parseInt(document.getElementById("minutesField").value);
+    var seconds = parseInt(document.getElementById("secondsField").value);
+
+    // Total remaining seconds
+    var totalSeconds = minutes * 60 + seconds;
+
+    // Starting pressure value for the bar
+    var startBar = 300;
+
+    // Calculate steps for the bar
+    var steps = startBar / totalSeconds;
+
+    // Update frequency in milliseconds
+    var updateInterval = 1000;
+
+    // Initial time for the countdown
+    var currentTime = totalSeconds;
+
+    // Initialize pointer
+    var currentBarValue = startBar;
+
+    // Start value for the display
+    document.getElementById("timerDisplay").innerHTML = "Remaining Time: " + formatTime(currentTime);
+    document.getElementById("anzeige").innerHTML = "Bar: " + Math.round(currentBarValue);
+
+    // If a countdown is already running, don't start again
+    if (!countdownInterval)
+    {
+        // Start countdown
+        countdownInterval = setInterval(function() {
+            // If not paused, update the countdown
+            if (!paused)
+            {
+                // Update time
+                currentTime--;
+
+                // Update bar
+                currentBarValue -= steps;
+
+                // Update display
+                document.getElementById("timerDisplay").innerHTML = "Remaining Time: " + formatTime(currentTime);
+                document.getElementById("anzeige").innerHTML = "Bar: " + Math.round(currentBarValue);
+
+                // Update pointer
+                drawZeiger(currentBarValue);
+
+                // If time is up, stop the countdown
+                if (currentTime <= 0)
+                {
+                    clearInterval(countdownInterval);
+                    document.getElementById("timerDisplay").innerHTML = "Elapsed Time: " + formatTime(0);
+                    document.getElementById("anzeige").innerHTML = "Bar: 0";
+                    drawZeiger(0);
+                }
+            }
+        }, updateInterval);
+    }
+}
+
+// Function to format time in MM:SS format.
+// Converts total seconds into minutes and remaining seconds, then returns the formatted time.
+// Uses the pad function to ensure two-digit formatting.
+// Uses the pad function.
+function formatTime(seconds)
+{
+    var minutes = Math.floor(seconds / 60);
+    var remainingSeconds = seconds % 60;
+    return pad(minutes) + ":" + pad(remainingSeconds);
+}
+
+// Function to pad single-digit numbers with leading zeros.
+// Adds a leading zero to single-digit numbers to ensure two-digit formatting.
+// Used by the formatTime function.
+function pad(val)
+{
+    return val < 10 ? "0" + val : val;
+}
+
+// Function to pause the countdown.
+// Sets the paused flag to true, indicating the countdown is paused.
+function pauseCountdown()
+{
+    paused = true;
+}
+
+// Function to resume the countdown.
+// Sets the paused flag to false, indicating the countdown is resumed.
+function resumeCountdown()
+{
+    paused = false;
+}
+
+// Event handler for the pause button click.
+// Stops the countdown or barometer function based on the current state.
+// If the button's text is "Pause", it changes it to "Resume" and saves the current pressure value.
+// If the button's text is "Resume", it changes it back to "Pause" and resumes the barometer function with the saved pressure value.
+function handlePauseButtonClick()
+{
+    var pauseButton = document.getElementById("buttonPause");
+    clearInterval(intervalId); // Stop countdown or barometer function
+
+    if (pauseButton.innerHTML === "Pause")
+    {
+        pauseButton.innerHTML = "Resume";
+        // Save the current pressure value
+        currentPressure = bar;
+    }
+    else
+    {
+        pauseButton.innerHTML = "Pause";
+        // Resume the barometer function with the saved pressure value
+        intervalId = setInterval(function() {
+            if (!paused)
+            {
+                elapsedTime++;
+                bar -= druckAbfallRate / fps;
+                if (bar < minBar)
+                {
+                    bar = minBar;
+                    clearInterval(intervalId);
+                }
+                drawZeiger(bar);
+                updateElapsedTime();
+            }
+        }, 1000 / fps);
+    }
+}
+
+// Function to update the display and bar based on the remaining time and start pressure.
+// It calculates the remaining time in seconds and updates the timer display.
+// Then it calculates the bar value based on the remaining time and the start pressure, and updates the barometer display accordingly.
+function updateDisplayAndBar(seconds, startBar)
+{
+    // Update display
+    document.getElementById("timerDisplay").innerHTML = "Remaining Time: " + formatTime(seconds);
+
+    // Update bar
+    var bar = startBar * (seconds / (parseInt(document.getElementById("minutesField").value) * 60));
+    drawZeiger(bar);
+    document.getElementById("anzeige").innerHTML = "Bar: " + Math.round(bar);
+}
+
+// Function to reset the timer to its initial state.
+// It calculates the remaining time based on the values entered in the input fields for minutes and seconds.
+// Then it stops the countdown, clears the interval, and resets the display and event listeners for the start and pause buttons.
+// Finally, it resets the pointer on the gauge to the default pressure value.
+function resetTimer()
+{
+    var minutes = parseInt(document.getElementById("minutesField").value);
+    var seconds = parseInt(document.getElementById("secondsField").value);
+    remainingTime = minutes * 60 + seconds;
+
+    stopCountdown();
+    clearInterval(intervalId);
+
+    var pauseButton = document.getElementById("buttonPause");
+    var startButton = document.getElementById("startbutton");
+
+    pauseButton.style.display = "none";
+    startButton.style.display = "block";
+    pauseButton.innerHTML = "Pause";
+
+    startButton.removeEventListener("click", handleStartButtonClickTimer);
+    startButton.addEventListener("click", handleStartButtonClickTimer);
+
+    clearInterval(countdownInterval);
+    countdownInterval = null;
+
+    // Reset for the pointer
+    drawZeiger(300);
+}
+
+// Function to reset the manometer to its initial state.
+// It resets the display for the manometer and the elapsed time to their initial values.
+// Then it resets the internal bar value to the default pressure value and updates the pointer on the gauge accordingly.
+// If the countdown is running, it stops it and hides the pause button while showing the start button.
+function resetManometer()
+{
+    // Reset the display to the initial value
+    var timerDisplay = document.getElementById("timerDisplay");
+    timerDisplay.innerHTML = "Elapsed Time: 00:00";
+
+    // Reset the display for the manometer to the initial value
+    var anzeige = document.getElementById("anzeige");
+    anzeige.innerHTML = startDruck;
+
+    // Reset the internal bar value to the initial value
+    bar = startDruck;
+
+    // Set pointer to the start pressure
+    drawZeiger(startDruck);
+
+    // If the countdown is running, stop it
+    stopCountdown();
+
+    // Reset and hide the pause button
+    var pauseButton = document.getElementById("buttonPause");
+    pauseButton.innerHTML = "Pause";
+    pauseButton.style.display = "none";
+
+    // Show the start button
+    var startButton = document.getElementById("startbutton");
+    startButton.style.display = "block";
+}
+
+// Function to handle the click event of the start button in the timer option.
+// It initiates the countdown timer when the start button is clicked.
+// It hides the start button and displays the pause button with its text set to "Pause".
+// It adds an event listener to the pause button to handle its click event.
+function handleStartButtonClickTimer()
+{
+    // Logic for the start button click event in the timer option
+    startCountdown(); // Example: startCountdown();
+
+    // Change the start button to a pause button
+    var startButton = document.getElementById("startbutton");
+    startButton.style.display = "none"; // Hide start button
+
+    var pauseButton = document.getElementById("buttonPause");
+    pauseButton.style.display = "block"; // Show pause button
+    pauseButton.innerHTML = "Pause"; // Reset text to "Pause"
+
+    // Add event listener for the pause button
+    pauseButton.removeEventListener("click", handlePauseButtonTimer);
+    pauseButton.addEventListener("click", handlePauseButtonTimer);
+}
+
+// Function to handle the click event of the start button in the barometer option.
+// It resets the manometer to its initial state.
+// It retrieves the start pressure value and pressure drop rate from sliders.
+// It resets the elapsed time.
+// It starts the barometer function with a setInterval call to update pressure values.
+// It hides the start button and displays the pause button with its text set to "Pause".
+// It updates the event listener for the pause button to handle its click event.
+function handleStartButtonClickBarometer()
+{
+
+    // First reset the manometer
+    resetManometer();
+
+    // Start value for pressure
+    var startDruck = parseFloat(startDruckSlider.value);
+
+    // Pressure drop rate
+    var druckAbfallRate = parseFloat(druckAbfallSlider.value);
+
+    // Reset elapsed time
+    elapsedTime = 0;
+
+    // Start the barometer function
+    intervalId = setInterval(function() {
+        if (!paused)
+        {
+            elapsedTime++;
+            bar -= druckAbfallRate / fps;
+            if (bar < minBar)
+            {
+                bar = minBar;
+                clearInterval(intervalId);
+            }
+            drawZeiger(bar);
+            updateElapsedTime();
+        }
+    }, 1000 / fps);
+
+    // Change the start button to a pause button
+    var startButton = document.getElementById("startbutton");
+    startButton.style.display = "none"; // Hide start button
+
+    var pauseButton = document.getElementById("buttonPause");
+    pauseButton.style.display = "block"; // Show pause button
+
+    // Reset the pause button to "Pause"
+    pauseButton.innerHTML = "Pause";
+
+    // Update event listener for the pause button
+    pauseButton.removeEventListener("click", handlePauseButtonClick);
+    pauseButton.addEventListener("click", handlePauseButtonClick);
+}
+
+// Function to stop the countdown.
+// It clears the interval to stop the countdown.
+// It resets the display to show "Remaining Time: 00:00".
+function stopCountdown()
+{
+    clearInterval(intervalId); // Clear interval to stop the countdown
+    var timerDisplay = document.getElementById("timerDisplay");
+    timerDisplay.innerHTML = "Remaining Time: 00:00"; // Reset display to zero
+}
+
+// Function for handling the click event of the pause button in the timer option.
+// If the button text is "Pause", it pauses the countdown timer and changes the button text to "Continue".
+// If the button text is "Continue", it resumes the countdown timer and changes the button text back to "Pause".
+function handlePauseButtonTimer()
+{
+    // Logic for the pause button click event in the timer option
+    var pauseButton = document.getElementById("buttonPause");
+
+    if (pauseButton.innerHTML === "Pause")
+    {
+        // Pause the timer
+        pauseCountdown(); // Pause timer
+        pauseButton.innerHTML = "Continue";
+    }
+    else
+    {
+        // Resume the timer
+        resumeCountdown(); // Resume timer
+        pauseButton.innerHTML = "Pause";
+    }
+}
+
+// Function for calculating the remaining time based on the values entered in the minutes and seconds input fields.
+// Returns the total remaining time in seconds.
+function calculateRemainingTime()
+{
+    // Read minutes and seconds from input fields
+    var minutes = parseInt(document.getElementById("minutesField").value);
+    var seconds = parseInt(document.getElementById("secondsField").value);
+
+    // Calculate total remaining seconds
+    return minutes * 60 + seconds;
+}
+
+// Function to start the countdown timer from the current remaining time.
+// Uses the remainingTime variable to determine the initial time.
+function startCountdownFromCurrentTime()
+{
+    startCountdown(remainingTime);
+}
+
+// Function to toggle between timer and barometer options based on the selected value in the dropdown menu.
+// Retrieves DOM elements for necessary components such as the function select dropdown, timer div, input fields, and buttons.
+// Determines the selected value from the dropdown menu.
+// If "timer" is selected:
+// - Displays timer input fields (minutes and seconds) if they don't already exist.
+// - Clears any existing interval for countdown.
+// - Sets the display style of timer related elements to show them.
+// - Hides barometer related elements.
+// - Updates event listeners for start, reset, and pause buttons to handle timer functionality.
+// If "barometer" is selected:
+// - Hides timer input fields.
+// - Shows barometer related elements.
+// - Stops the countdown if it's running.
+// - Updates event listeners for start, reset, and pause buttons to handle barometer functionality.
+// Ensures the start button is visible regardless of the selected option.
+function toggleFunction()
+{
+    // Retrieve DOM elements
+    var functionSelect = document.getElementById("functionSelect"),
+        selectedValue = functionSelect.options[functionSelect.selectedIndex].value,
+        timerDiv = document.getElementById("timerDiv"),
+        minutesField = document.getElementById("minutesField"),
+        secondsField = document.getElementById("secondsField"),
+        startButton = document.getElementById("startbutton"),
+        resetButton = document.getElementById("resetbutton"),
+        pauseButton = document.getElementById("buttonPause");
+
+    // Check the selected option value
+    if (selectedValue === "timer")
+    {
+        // Display timer fields
+        if (!minutesField)
+        {
+            minutesField = document.createElement("input");
+            minutesField.setAttribute("type", "number");
+            minutesField.setAttribute("id", "minutesField");
+            minutesField.setAttribute("placeholder", "Min");
+            minutesField.setAttribute("min", "0");
+            minutesField.setAttribute("max", "59");
+            minutesField.setAttribute("value", "5");
+            minutesField.style.display = "inline";
+            timerDiv.appendChild(minutesField);
+        }
+
+        if (!secondsField)
+        {
+            secondsField = document.createElement("input");
+            secondsField.setAttribute("type", "number");
+            secondsField.setAttribute("id", "secondsField");
+            secondsField.setAttribute("placeholder", "Sec");
+            secondsField.setAttribute("min", "0");
+            secondsField.setAttribute("max", "59");
+            secondsField.setAttribute("value", "0");
+            secondsField.style.display = "inline";
+            timerDiv.appendChild(secondsField);
+        }
+
+        clearInterval(intervalId);
+        timerDiv.style.display = "flex";
+        document.getElementById("p_rate").style.display = "none";
+        document.getElementById("startpress").style.display = "none";
+        startButton.removeEventListener("click", handleStartButtonClickBarometer);
+        startButton.addEventListener("click", handleStartButtonClickTimer);
+        resetButton.removeEventListener("click", resetManometer);
+        resetButton.addEventListener("click", resetTimer); // Assign resetTimer here
+        pauseButton.removeEventListener("click", handlePauseButtonClick);
+        pauseButton.addEventListener("click", handlePauseButtonTimer);
+    }
+    else
+    {
+        // Display barometer fields
+        timerDiv.style.display = "none";
+        document.getElementById("p_rate").style.display = "block";
+        document.getElementById("startpress").style.display = "block";
+        stopCountdown();
+        startButton.removeEventListener("click", handleStartButtonClickTimer);
+        startButton.addEventListener("click", handleStartButtonClickBarometer);
+        resetButton.removeEventListener("click", resetTimer); // Remove resetTimer here
+        resetButton.addEventListener("click", resetManometer);
+        pauseButton.removeEventListener("click", handlePauseButtonTimer);
+        pauseButton.addEventListener("click", handlePauseButtonClick);
+    }
+    startButton.style.display = "block"; // Ensure start button is visible
+}
+
+    </script>
+</body>
+</html>
+)=====";
+
+void handleRoot() {
+ 
+     server.send(200, "text/html",htmlCode);
+}
+
 void InitializeHTTPServer() {
     server.on("/", handleRoot);
-    server.on("/generate_204", handleRoot);
-    server.on("/favicon.ico", handleRoot);
-    server.on("/fwlink", handleRoot);
-    server.on("/generate_204", handleRoot);
     server.onNotFound(handleNotFound);
     server.begin();
-}
-
-void setup() {
-    Serial.begin(115200);
-    pinMode(beepPinGround, OUTPUT);
-    digitalWrite(beepPinGround, LOW);
-    pinMode(beepPin, OUTPUT);
-    digitalWrite(beepPin, LOW);
-    ObjServo.attach(ServoGPIO, 500, 2800);
-    Serial.print("Making connection to ");
-
-    // Set up SoftAP for captive portal
-    WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-    WiFi.softAP("Drucksensor");
-    Serial.println(WiFi.softAPIP());
-    dnsServer.start(DNS_PORT, "*", apIP);
-    server.begin();
-    InitializeHTTPServer();
 
     // Handle request for current SSID
     server.on("/getSSID", HTTP_GET, []() {
@@ -808,6 +1038,23 @@ void setup() {
     });
 }
 
+void setup() {
+    Serial.begin(115200);
+    pinMode(beepPinGround, OUTPUT);
+    digitalWrite(beepPinGround, LOW);
+    pinMode(beepPin, OUTPUT);
+    digitalWrite(beepPin, LOW);
+    ObjServo.attach(ServoGPIO, 500, 2800);
+    Serial.print("Making connection to ");
+
+    // Set up SoftAP for captive portal
+    WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+    WiFi.softAP("Drucksensor");
+    Serial.println(WiFi.softAPIP());
+    dnsServer.start(DNS_PORT, "*", apIP);
+    server.begin();
+    InitializeHTTPServer();
+}
 
 void loop() {
     dnsServer.processNextRequest();
