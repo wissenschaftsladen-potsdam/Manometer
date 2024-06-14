@@ -4,6 +4,8 @@
 #include <ESP8266WebServer.h>
 #include <EEPROM.h>
 
+#define EEPROM_SIZE 100 // Beispiel: Maximal 100 Bytes für UTF-8 Zeichen
+
 // Define the servo object and pins for servo and beep
 Servo ObjServo;
 const int ServoGPIO = D4;
@@ -318,7 +320,12 @@ const char* htmlCode = R"=====(
   function openSettingsPopup() {
     // Fetch current SSID from the server
     fetch("/getSSID")
-        .then(response => response.text())
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return response.text();
+        })
         .then(currentSSID => {
             // Creating the popup container
             var popupContainer = document.createElement("div");
@@ -361,7 +368,7 @@ const char* htmlCode = R"=====(
             saveButton.addEventListener("click", function() {
                 var userInput = document.getElementById("settingsTextField").value;
 
-                // Send the SSID to the D1 Mini and restart it
+                // Send the SSID to the server and handle response
                 fetch("/saveSSID", {
                     method: 'POST',
                     headers: {
@@ -378,13 +385,14 @@ const char* htmlCode = R"=====(
                     closeSettingsPopup(); // Close the popup after saving
                 })
                 .catch(error => {
-                    console.error('Error:', error);
+                    console.error('Error saving SSID:', error);
+                    // Handle error, optionally show user an error message
                 });
             });
 
             // Creating the close button
             var closeButton = document.createElement("button");
-            closeButton.innerHTML = "Abbrechen";
+            closeButton.innerHTML = "Close";
             closeButton.addEventListener("click", function() {
                 closeSettingsPopup(); // Close the popup when close button is clicked
             });
@@ -398,15 +406,18 @@ const char* htmlCode = R"=====(
         })
         .catch(error => {
             console.error('Error fetching current SSID:', error);
+            // Handle error, optionally show user an error message
         });
+
+    // Define closeSettingsPopup function within openSettingsPopup scope
+    function closeSettingsPopup() {
+        var popup = document.getElementById("settingsPopup");
+        if (popup) {
+            popup.parentNode.removeChild(popup);
+        }
+    }
   }
 
-  function closeSettingsPopup() {
-      var popup = document.getElementById("settingsPopup");
-      if (popup) {
-          popup.remove();
-      }
-  }
 
   // Erstellen des Einstellungen-Buttons
   var settingsButton = document.createElement("button");
@@ -840,36 +851,51 @@ void handleRoot() {
 }
 
 void InitializeHTTPServer() {
+    // Handler für die Standard-Endpunkte
     server.on("/", handleRoot);
     server.onNotFound(handleNotFound);
-   
-    // Handle request for current SSID
+
+    // Handler für die Anfrage der aktuellen SSID
     server.on("/getSSID", HTTP_GET, []() {
-        server.send(200, "text/plain", WiFi.softAPSSID());
+        // Versuche, die gespeicherte SSID aus der EEPROM zu lesen
+        String currentSSID;
+        int addr = 0;
+        char currentChar = EEPROM.read(addr++);
+        while (currentChar != '\0' && addr <= EEPROM_SIZE) {
+            currentSSID += currentChar;
+            currentChar = EEPROM.read(addr++);
+        }
+
+        if (currentSSID.length() > 0) {
+            server.send(200, "text/plain", currentSSID);
+        } else {
+            // Falls keine gespeicherte SSID vorhanden ist, sende die Standard-SSID
+            server.send(200, "text/plain", "Drucksensor");
+        }
     });
 
-    // Handle request to save new SSID and restart D1 Mini
+    // Handler für die Anfrage zum Speichern der neuen SSID und Neustart des D1 Mini
     server.on("/saveSSID", HTTP_POST, []() {
-    String newSSID = server.arg("ssid");
+        String newSSID = server.arg("ssid");
 
-    // Save new SSID to EEPROM
-    int addr = 0;
-    for (size_t i = 0; i < newSSID.length(); i++) {
-        EEPROM.write(addr++, newSSID[i]);
-    }
-    EEPROM.write(addr++, '\0'); // Null-Terminierung hinzufügen
+        // Speichern der neuen SSID in EEPROM
+        int addr = 0;
+        for (size_t i = 0; i < newSSID.length(); i++) {
+            EEPROM.write(addr++, newSSID[i]);
+        }
+        EEPROM.write(addr++, '\0'); // Null-Terminierung hinzufügen
 
-    EEPROM.commit(); // Speichern der Daten
+        EEPROM.commit(); // Speichern der Daten in der EEPROM
 
-    Serial.print("New SSID saved to EEPROM: ");
-    Serial.println(newSSID);
+        Serial.print("New SSID saved to EEPROM: ");
+        Serial.println(newSSID);
 
-    server.send(200, "text/plain", "SSID saved. Restarting...");
-    delay(1000); // Kurze Verzögerung, um die Antwort an den Client zu senden
-    ESP.restart(); // Neustart des D1 Mini
+        server.send(200, "text/plain", "SSID saved. Restarting...");
+        delay(1000); // Kurze Verzögerung, um die Antwort an den Client zu senden
+        ESP.restart(); // Neustart des D1 Mini
     });
 
-    server.begin();
+    server.begin(); // HTTP-Server starten
 }
 
 void setup() {
