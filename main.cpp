@@ -419,6 +419,7 @@ const char* htmlCode = R"=====(
   }
 
 
+
   // Erstellen des Einstellungen-Buttons
   var settingsButton = document.createElement("button");
   settingsButton.innerHTML = "Einstellungen";
@@ -845,8 +846,7 @@ const char* htmlCode = R"=====(
 
 )=====";
 
-void handleRoot() {
- 
+void handleRoot() { 
      server.send(200, "text/html",htmlCode);
 }
 
@@ -891,7 +891,7 @@ void InitializeHTTPServer() {
         Serial.println(newSSID);
 
         server.send(200, "text/plain", "SSID saved. Restarting...");
-        delay(1000); // Kurze Verzögerung, um die Antwort an den Client zu senden
+        delay(3000); // Kurze Verzögerung, um die Antwort an den Client zu senden
         ESP.restart(); // Neustart des D1 Mini
     });
 
@@ -900,19 +900,27 @@ void InitializeHTTPServer() {
 
 void setup() {
     Serial.begin(115200);
+
+    // Initialisierung der Pins
     pinMode(beepPinGround, OUTPUT);
     digitalWrite(beepPinGround, LOW);
     pinMode(beepPin, OUTPUT);
     digitalWrite(beepPin, LOW);
+
+    // Initialisierung des Servos
     ObjServo.attach(ServoGPIO, 500, 2800);
     Serial.print("Making connection to ");
+
+    // Initialisierung des EEPROM
+    EEPROM.begin(EEPROM_SIZE); // Initialisierung des EEPROM mit der definierten Größe
 
     // Set up SoftAP for captive portal
     WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
     WiFi.softAP("Drucksensor");
     Serial.println(WiFi.softAPIP());
+
+    // Starten des DNS-Servers und HTTP-Servers
     dnsServer.start(DNS_PORT, "*", apIP);
-    server.begin();
     InitializeHTTPServer();
 }
 
