@@ -4,7 +4,7 @@
 #include <ESP8266WebServer.h>
 #include <EEPROM.h>
 
-#define EEPROM_SIZE 100 // Beispiel: Maximal 100 Bytes für UTF-8 Zeichen
+#define EEPROM_SIZE 64 // Beispiel: Maximal 100 Bytes für UTF-8 Zeichen
 
 // Define the servo object and pins for servo and beep
 Servo ObjServo;
@@ -850,56 +850,11 @@ void handleRoot() {
      server.send(200, "text/html",htmlCode);
 }
 
-void InitializeHTTPServer() {
-    // Handler für die Standard-Endpunkte
-    server.on("/", handleRoot);
-    server.onNotFound(handleNotFound);
-
-    // Handler für die Anfrage der aktuellen SSID
-    server.on("/getSSID", HTTP_GET, []() {
-        // Versuche, die gespeicherte SSID aus der EEPROM zu lesen
-        String currentSSID;
-        int addr = 0;
-        char currentChar = EEPROM.read(addr++);
-        while (currentChar != '\0' && addr <= EEPROM_SIZE) {
-            currentSSID += currentChar;
-            currentChar = EEPROM.read(addr++);
-        }
-
-        if (currentSSID.length() > 0) {
-            server.send(200, "text/plain", currentSSID);
-        } else {
-            // Falls keine gespeicherte SSID vorhanden ist, sende die Standard-SSID
-            server.send(200, "text/plain", "Drucksensor");
-        }
-    });
-
-    // Handler für die Anfrage zum Speichern der neuen SSID und Neustart des D1 Mini
-    server.on("/saveSSID", HTTP_POST, []() {
-        String newSSID = server.arg("ssid");
-
-        // Speichern der neuen SSID in EEPROM
-        int addr = 0;
-        for (size_t i = 0; i < newSSID.length(); i++) {
-            EEPROM.write(addr++, newSSID[i]);
-        }
-        EEPROM.write(addr++, '\0'); // Null-Terminierung hinzufügen
-
-        EEPROM.commit(); // Speichern der Daten in der EEPROM
-
-        Serial.print("New SSID saved to EEPROM: ");
-        Serial.println(newSSID);
-
-        server.send(200, "text/plain", "SSID saved. Restarting...");
-        delay(3000); // Kurze Verzögerung, um die Antwort an den Client zu senden
-        ESP.restart(); // Neustart des D1 Mini
-    });
-
-    server.begin(); // HTTP-Server starten
-}
+void InitializeHTTPServer();
 
 void setup() {
     Serial.begin(115200);
+    delay(10);
 
     // Initialisierung der Pins
     pinMode(beepPinGround, OUTPUT);
@@ -908,23 +863,101 @@ void setup() {
     digitalWrite(beepPin, LOW);
 
     // Initialisierung des Servos
+    Servo ObjServo;
     ObjServo.attach(ServoGPIO, 500, 2800);
-    Serial.print("Making connection to ");
+    Serial.println("Servo initialized");
 
     // Initialisierung des EEPROM
-    EEPROM.begin(EEPROM_SIZE); // Initialisierung des EEPROM mit der definierten Größe
+    EEPROM.begin(EEPROM_SIZE);
 
-    // Set up SoftAP for captive portal
+     // Finden Sie die maximale Größe des EEPROMs
+    int eepromSize = EEPROM.length();
+
+    Serial.print("Maximale Größe des EEPROM: ");
+    Serial.println(eepromSize);
+
+ // Ausgabe des gesamten Inhalts des EEPROM
+    Serial.println("EEPROM Inhalt:");
+    for (int addr = 0; addr < EEPROM_SIZE; addr++) {
+        char value = EEPROM.read(addr);
+        if (value != '\0') {
+            Serial.print(value);
+        } else {
+            Serial.println(); // Neue Zeile für Nullzeichen
+        }
+    }
+    Serial.println("Ende des EEPROM Inhalts");
+
+    // Lesen der gespeicherten SSID aus dem EEPROM
+    String currentSSID;
+    int addr = 0;
+    char currentChar = EEPROM.read(addr++);
+
+    while (currentChar != '\0' && addr <= EEPROM_SIZE) {
+        currentSSID += currentChar;
+        currentChar = EEPROM.read(addr++);
+    }
+
+    currentSSID.trim(); // Entfernen Sie etwaige führende oder abschließende Leerzeichen
+
+    // Verwendung der gespeicherten SSID für WiFi.softAP
+    if (currentSSID.length() > 0) {
+        WiFi.softAP(currentSSID.c_str()); // Verwenden der gespeicherten SSID
+    } else {
+        WiFi.softAP("DrucksensorNOSSID"); // Verwenden einer Standard-SSID, wenn keine gespeicherte SSID vorhanden ist
+    }
+
+    // Konfigurieren der SoftAP-IP
     WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-    WiFi.softAP("Drucksensor");
+    Serial.print("SoftAP IP-Adresse: ");
     Serial.println(WiFi.softAPIP());
 
     // Starten des DNS-Servers und HTTP-Servers
     dnsServer.start(DNS_PORT, "*", apIP);
     InitializeHTTPServer();
+
+    Serial.println("Setup abgeschlossen.");
 }
 
 void loop() {
     dnsServer.processNextRequest();
     server.handleClient();
+}
+
+void InitializeHTTPServer() {
+    Serial.println("InitializeHTTPServer");
+
+    server.on("/", handleRoot);
+    server.onNotFound(handleNotFound);
+
+    server.on("/getSSID", HTTP_GET, []() {
+        String currentSSID = WiFi.softAPSSID(); // Aktuelle SSID von WiFi.softAP abrufen
+        server.send(200, "text/plain", currentSSID);
+    });
+
+    server.on("/saveSSID", HTTP_POST, []() {
+        String newSSID = server.arg("ssid");
+
+        // Speichern der neuen SSID im EEPROM
+        int addr = 0;
+        for (size_t i = 0; i < newSSID.length(); i++) {
+        EEPROM.write(addr++, newSSID[i]);
+        }
+        EEPROM.write(addr++, '\0'); // Nullzeichen am Ende hinzufügen
+        EEPROM.commit();
+
+        Serial.print("New SSID saved to EEPROM: ");
+        Serial.println(newSSID);
+
+        // Warten, um sicherzustellen, dass die Antwort gesendet wird
+        server.send(200, "text/plain", "SSID saved. Restarting...");
+        delay(100);
+
+        // Alle Verbindungen schließen und den ESP8266 neu starten
+        server.client().stopAll();
+        delay(100);
+        ESP.reset();
+    });
+
+    server.begin();
 }
