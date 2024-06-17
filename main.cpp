@@ -11,6 +11,7 @@ Servo ObjServo;
 const int ServoGPIO = D4;
 const int beepPin = D3;
 const int beepPinGround = D2;
+const char* ssid_default = "Drucksensor1";
 
 // Create an ESP8266WebServer object on port 80
 ESP8266WebServer server(80);
@@ -856,39 +857,18 @@ void setup() {
     Serial.begin(115200);
     delay(10);
 
-    // Initialisierung der Pins
+    // Initialisierung der Pins und anderer Komponenten
     pinMode(beepPinGround, OUTPUT);
     digitalWrite(beepPinGround, LOW);
     pinMode(beepPin, OUTPUT);
     digitalWrite(beepPin, LOW);
-
-    // Initialisierung des Servos
-    Servo ObjServo;
     ObjServo.attach(ServoGPIO, 500, 2800);
     Serial.println("Servo initialized");
 
-    // Initialisierung des EEPROM
+    // Initialisierung des Emulated EEPROM
     EEPROM.begin(EEPROM_SIZE);
 
-     // Finden Sie die maximale Größe des EEPROMs
-    int eepromSize = EEPROM.length();
-
-    Serial.print("Maximale Größe des EEPROM: ");
-    Serial.println(eepromSize);
-
- // Ausgabe des gesamten Inhalts des EEPROM
-    Serial.println("EEPROM Inhalt:");
-    for (int addr = 0; addr < EEPROM_SIZE; addr++) {
-        char value = EEPROM.read(addr);
-        if (value != '\0') {
-            Serial.print(value);
-        } else {
-            Serial.println(); // Neue Zeile für Nullzeichen
-        }
-    }
-    Serial.println("Ende des EEPROM Inhalts");
-
-    // Lesen der gespeicherten SSID aus dem EEPROM
+    // Lesen der gespeicherten SSID aus dem Emulated EEPROM
     String currentSSID;
     int addr = 0;
     char currentChar = EEPROM.read(addr++);
@@ -898,13 +878,17 @@ void setup() {
         currentChar = EEPROM.read(addr++);
     }
 
-    currentSSID.trim(); // Entfernen Sie etwaige führende oder abschließende Leerzeichen
+    currentSSID.trim(); // Entfernen von führenden oder abschließenden Leerzeichen
+
+    // Ausgabe der geladenen SSID zur Überprüfung
+    Serial.print("Loaded SSID from EEPROM: ");
+    Serial.println(currentSSID);
 
     // Verwendung der gespeicherten SSID für WiFi.softAP
     if (currentSSID.length() > 0) {
         WiFi.softAP(currentSSID.c_str()); // Verwenden der gespeicherten SSID
     } else {
-        WiFi.softAP("DrucksensorNOSSID"); // Verwenden einer Standard-SSID, wenn keine gespeicherte SSID vorhanden ist
+        WiFi.softAP(ssid_default); // Verwenden der Standard-SSID, falls keine gespeicherte SSID vorhanden ist
     }
 
     // Konfigurieren der SoftAP-IP
@@ -918,6 +902,7 @@ void setup() {
 
     Serial.println("Setup abgeschlossen.");
 }
+
 
 void loop() {
     dnsServer.processNextRequest();
@@ -935,29 +920,44 @@ void InitializeHTTPServer() {
         server.send(200, "text/plain", currentSSID);
     });
 
-    server.on("/saveSSID", HTTP_POST, []() {
-        String newSSID = server.arg("ssid");
+  server.on("/saveSSID", HTTP_POST, []() {
+    String newSSID = server.arg("ssid");
 
-        // Speichern der neuen SSID im EEPROM
-        int addr = 0;
-        for (size_t i = 0; i < newSSID.length(); i++) {
+    // Speichern der neuen SSID im Emulated EEPROM
+    int addr = 0;
+    for (size_t i = 0; i < newSSID.length(); i++) {
         EEPROM.write(addr++, newSSID[i]);
-        }
-        EEPROM.write(addr++, '\0'); // Nullzeichen am Ende hinzufügen
-        EEPROM.commit();
+    }
+    EEPROM.write(addr++, '\0'); // Nullzeichen am Ende hinzufügen
+    EEPROM.commit();
 
-        Serial.print("New SSID saved to EEPROM: ");
-        Serial.println(newSSID);
+    Serial.print("New SSID saved to Emulated EEPROM: ");
+    Serial.println(newSSID);
 
-        // Warten, um sicherzustellen, dass die Antwort gesendet wird
-        server.send(200, "text/plain", "SSID saved. Restarting...");
-        delay(100);
+    // Lade die gespeicherte SSID aus dem EEPROM
+    String loadedSSID;
+    addr = 0;
+    char currentChar = EEPROM.read(addr++);
+    while (currentChar != '\0' && addr <= EEPROM_SIZE) {
+        loadedSSID += currentChar;
+        currentChar = EEPROM.read(addr++);
+    }
 
-        // Alle Verbindungen schließen und den ESP8266 neu starten
-        server.client().stopAll();
-        delay(100);
-        ESP.reset();
-    });
+    loadedSSID.trim(); // Entfernen von führenden oder abschließenden Leerzeichen
+
+    Serial.print("Loaded SSID from EEPROM: ");
+    Serial.println(loadedSSID);
+    server.send(200, "text/plain", loadedSSID);
+
+    // Senden der Antwort an den Client
+    String responseMessage = "SSID saved. Restarting. Loaded SSID: " + loadedSSID;
+    server.send(200, "text/plain", responseMessage);
+    delay(100);
+
+    // ESP8266 neu starten, um die neue SSID zu übernehmen
+    ESP.restart();
+  });
+
 
     server.begin();
 }
