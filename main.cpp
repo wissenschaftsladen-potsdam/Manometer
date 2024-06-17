@@ -9,9 +9,10 @@
 // Define the servo object and pins for servo and beep
 Servo ObjServo;
 const int ServoGPIO = D4;
-const int beepPin = D3;
+const int beepPin = D5;
 const int beepPinGround = D2;
 const char* ssid_default = "Drucksensor1";
+float radius = 200;
 
 // Create an ESP8266WebServer object on port 80
 ESP8266WebServer server(80);
@@ -22,7 +23,7 @@ DNSServer dnsServer;
 IPAddress apIP(192, 168, 112, 1);
 
 // Function to check if a string is an IP address
-bool isIp(const String &str) {
+bool isIp(const String& str) {
     for (size_t i = 0; i < str.length(); i++) {
         char c = str.charAt(i);
         if (c != '.' && (c < '0' || c > '9')) {
@@ -33,7 +34,7 @@ bool isIp(const String &str) {
 }
 
 // Function to convert IP address to string
-String toStringIp(const IPAddress &ip) {
+String toStringIp(const IPAddress& ip) {
     String res = "";
     for (int i = 0; i < 3; i++) {
         res += String((ip >> (8 * i)) & 0xFF) + ".";
@@ -276,18 +277,32 @@ const char* htmlCode = R"=====(
       var angle = (((bar - minBar) / (maxBar - minBar)) * (Math.PI)) + Math.PI;
       var xZeiger = x + Math.cos(angle) * (radius - 70);
       var yZeiger = y + Math.sin(angle) * (radius - 70);
+
       context.beginPath();
       context.arc(x, y, radius - 65, 0, 2 * Math.PI);
       context.fillStyle = '#FFFFFF';
       context.fill();
+
       context.beginPath();
       context.moveTo(x, y);
       context.lineTo(xZeiger, yZeiger);
       context.lineWidth = 5;
       context.strokeStyle = '#FF0000';
       context.stroke();
+
       var anzeige = document.getElementById("anzeige");
       anzeige.innerHTML = bar.toFixed(2);
+
+// HTTP-Anfrage an den ESP8266 senden, um den Servo einzustellen
+    fetch('/setPressure?pressure=' + bar)
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Netzwerkantwort war nicht ok');
+        }
+        return response.text();
+      })
+      .then(text => console.log(text))
+      .catch(error => console.error('Fehler beim Einstellen des Servos:', error));
   }
 
   // Function to update the elapsed time display<br>
@@ -847,21 +862,71 @@ const char* htmlCode = R"=====(
 
 )=====";
 
-void handleRoot() { 
-     server.send(200, "text/html",htmlCode);
+void handleRoot() {
+    server.send(200, "text/html", htmlCode);
 }
 
 void InitializeHTTPServer();
+
+void steuereBuzzer(float druck) {
+    if (druck >= 0 && druck <= 50) {
+        // Buzzer aktivieren
+        digitalWrite(beepPin, HIGH);
+        delay(100); // Buzzer für 100 Millisekunden aktivieren
+        digitalWrite(beepPin, LOW);
+    }
+    else {
+        // Buzzer deaktivieren
+        digitalWrite(beepPin, LOW);
+    }
+}
+
+void setServoToPressure() {
+    if (!server.hasArg("pressure")) {
+        server.send(400, "text/plain", "Bad Request: No pressure argument provided");
+        return;
+    }
+
+    String pressureValue = server.arg("pressure");
+    float pressure = pressureValue.toFloat();
+
+    // Konvertieren Sie den Druckwert in einen Servo-Wert (angenommen, 0 bis 180 Grad)
+    int servoValue = map(pressure, 0, 300, 0, 180);
+
+    // Um den Servo-Wert umzukehren, subtrahieren Sie ihn von 180
+    servoValue = 180 - servoValue;
+
+    // Stellen Sie sicher, dass der Wert innerhalb der gültigen Grenzen bleibt
+    servoValue = constrain(servoValue, 0, 180);
+
+    // Setzen Sie den Servo auf den berechneten Wert
+    ObjServo.write(servoValue);
+
+    if (pressure < 50) {
+        Serial.println("Beeper ON");
+        digitalWrite(beepPin, HIGH); // Buzzer einschalten
+    }
+    else {
+        Serial.println("Beeper OFF");
+        digitalWrite(beepPin, LOW); // Buzzer ausschalten
+    }
+
+    // Antwort an den Client senden
+    server.send(200, "text/plain", "Servo set to pressure: " + String(pressure));
+}
 
 void setup() {
     Serial.begin(115200);
     delay(10);
 
-    // Initialisierung der Pins und anderer Komponenten
-    pinMode(beepPinGround, OUTPUT);
-    digitalWrite(beepPinGround, LOW);
     pinMode(beepPin, OUTPUT);
-    digitalWrite(beepPin, LOW);
+    digitalWrite(beepPin, HIGH); // Beeper sollte piepen
+    delay(1000); // Warten Sie 1 Sekunde
+    digitalWrite(beepPin, LOW); // Beeper ausschalten
+
+    // Initialisierung der Pins und anderer Komponenten
+    pinMode(beepPin, OUTPUT);
+    digitalWrite(beepPin, HIGH); // Beeper initial aktivieren
     ObjServo.attach(ServoGPIO, 500, 2800);
     Serial.println("Servo initialized");
 
@@ -887,7 +952,8 @@ void setup() {
     // Verwendung der gespeicherten SSID für WiFi.softAP
     if (currentSSID.length() > 0) {
         WiFi.softAP(currentSSID.c_str()); // Verwenden der gespeicherten SSID
-    } else {
+    }
+    else {
         WiFi.softAP(ssid_default); // Verwenden der Standard-SSID, falls keine gespeicherte SSID vorhanden ist
     }
 
@@ -899,6 +965,12 @@ void setup() {
     // Starten des DNS-Servers und HTTP-Servers
     dnsServer.start(DNS_PORT, "*", apIP);
     InitializeHTTPServer();
+
+    // Initialisieren des Servos
+    ObjServo.attach(ServoGPIO);
+
+    // Druckwert vom Server holen
+    server.on("/setPressure", HTTP_GET, setServoToPressure);
 
     Serial.println("Setup abgeschlossen.");
 }
@@ -918,45 +990,45 @@ void InitializeHTTPServer() {
     server.on("/getSSID", HTTP_GET, []() {
         String currentSSID = WiFi.softAPSSID(); // Aktuelle SSID von WiFi.softAP abrufen
         server.send(200, "text/plain", currentSSID);
-    });
+        });
 
-  server.on("/saveSSID", HTTP_POST, []() {
-    String newSSID = server.arg("ssid");
+    server.on("/saveSSID", HTTP_POST, []() {
+        String newSSID = server.arg("ssid");
 
-    // Speichern der neuen SSID im Emulated EEPROM
-    int addr = 0;
-    for (size_t i = 0; i < newSSID.length(); i++) {
-        EEPROM.write(addr++, newSSID[i]);
-    }
-    EEPROM.write(addr++, '\0'); // Nullzeichen am Ende hinzufügen
-    EEPROM.commit();
+        // Speichern der neuen SSID im Emulated EEPROM
+        int addr = 0;
+        for (size_t i = 0; i < newSSID.length(); i++) {
+            EEPROM.write(addr++, newSSID[i]);
+        }
+        EEPROM.write(addr++, '\0'); // Nullzeichen am Ende hinzufügen
+        EEPROM.commit();
 
-    Serial.print("New SSID saved to Emulated EEPROM: ");
-    Serial.println(newSSID);
+        Serial.print("New SSID saved to Emulated EEPROM: ");
+        Serial.println(newSSID);
 
-    // Lade die gespeicherte SSID aus dem EEPROM
-    String loadedSSID;
-    addr = 0;
-    char currentChar = EEPROM.read(addr++);
-    while (currentChar != '\0' && addr <= EEPROM_SIZE) {
-        loadedSSID += currentChar;
-        currentChar = EEPROM.read(addr++);
-    }
+        // Lade die gespeicherte SSID aus dem EEPROM
+        String loadedSSID;
+        addr = 0;
+        char currentChar = EEPROM.read(addr++);
+        while (currentChar != '\0' && addr <= EEPROM_SIZE) {
+            loadedSSID += currentChar;
+            currentChar = EEPROM.read(addr++);
+        }
 
-    loadedSSID.trim(); // Entfernen von führenden oder abschließenden Leerzeichen
+        loadedSSID.trim(); // Entfernen von führenden oder abschließenden Leerzeichen
 
-    Serial.print("Loaded SSID from EEPROM: ");
-    Serial.println(loadedSSID);
-    server.send(200, "text/plain", loadedSSID);
+        Serial.print("Loaded SSID from EEPROM: ");
+        Serial.println(loadedSSID);
+        server.send(200, "text/plain", loadedSSID);
 
-    // Senden der Antwort an den Client
-    String responseMessage = "SSID saved. Restarting. Loaded SSID: " + loadedSSID;
-    server.send(200, "text/plain", responseMessage);
-    delay(100);
+        // Senden der Antwort an den Client
+        String responseMessage = "SSID saved. Restarting. Loaded SSID: " + loadedSSID;
+        server.send(200, "text/plain", responseMessage);
+        delay(100);
 
-    // ESP8266 neu starten, um die neue SSID zu übernehmen
-    ESP.restart();
-  });
+        // ESP8266 neu starten, um die neue SSID zu übernehmen
+        ESP.restart();
+        });
 
 
     server.begin();
