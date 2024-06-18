@@ -10,9 +10,10 @@
 Servo ObjServo;
 const int ServoGPIO = D4;
 const int beepPin = D5;
-const int beepPinGround = D2;
-const char* ssid_default = "Drucksensor1";
-float radius = 200;
+bool isBeeperOn = false;
+const char* ssid_default = "Drucksensor_MachBar";
+//float radius = 200;
+float lastKnownPressure = 300; // Globale Variable zum Speichern des letzten bekannten Druckwerts
 
 // Create an ESP8266WebServer object on port 80
 ESP8266WebServer server(80);
@@ -868,18 +869,6 @@ void handleRoot() {
 
 void InitializeHTTPServer();
 
-void steuereBuzzer(float druck) {
-    if (druck >= 0 && druck <= 50) {
-        // Buzzer aktivieren
-        digitalWrite(beepPin, HIGH);
-        delay(100); // Buzzer für 100 Millisekunden aktivieren
-        digitalWrite(beepPin, LOW);
-    }
-    else {
-        // Buzzer deaktivieren
-        digitalWrite(beepPin, LOW);
-    }
-}
 
 void setServoToPressure() {
     if (!server.hasArg("pressure")) {
@@ -889,6 +878,7 @@ void setServoToPressure() {
 
     String pressureValue = server.arg("pressure");
     float pressure = pressureValue.toFloat();
+    lastKnownPressure = pressure; // Aktualisieren des letzten bekannten Druckwerts
 
     // Konvertieren Sie den Druckwert in einen Servo-Wert (angenommen, 0 bis 180 Grad)
     int servoValue = map(pressure, 0, 300, 0, 180);
@@ -902,14 +892,14 @@ void setServoToPressure() {
     // Setzen Sie den Servo auf den berechneten Wert
     ObjServo.write(servoValue);
 
-    if (pressure < 50) {
+    /*if (pressure < 50) {
         Serial.println("Beeper ON");
         digitalWrite(beepPin, HIGH); // Buzzer einschalten
     }
     else {
         Serial.println("Beeper OFF");
         digitalWrite(beepPin, LOW); // Buzzer ausschalten
-    }
+    }*/
 
     // Antwort an den Client senden
     server.send(200, "text/plain", "Servo set to pressure: " + String(pressure));
@@ -921,12 +911,12 @@ void setup() {
 
     pinMode(beepPin, OUTPUT);
     digitalWrite(beepPin, HIGH); // Beeper sollte piepen
-    delay(1000); // Warten Sie 1 Sekunde
-    digitalWrite(beepPin, LOW); // Beeper ausschalten
+    delay(500); // Warten Sie 1 Sekunde
+    digitalWrite(beepPin, LOW); // Beeper ausschalten    
 
     // Initialisierung der Pins und anderer Komponenten
-    pinMode(beepPin, OUTPUT);
-    digitalWrite(beepPin, HIGH); // Beeper initial aktivieren
+    //pinMode(beepPin, OUTPUT);
+    //digitalWrite(beepPin, HIGH); // Beeper initial aktivieren
     ObjServo.attach(ServoGPIO, 500, 2800);
     Serial.println("Servo initialized");
 
@@ -979,6 +969,21 @@ void setup() {
 void loop() {
     dnsServer.processNextRequest();
     server.handleClient();
+    // Beeper basierend auf dem letzten bekannten Druckwert steuern
+    if (lastKnownPressure < 50) {
+        if (!isBeeperOn) {
+            Serial.println("Beeper ON");
+            digitalWrite(beepPin, HIGH); // Beeper einschalten
+            isBeeperOn = true;
+        }
+    }
+    else {
+        if (isBeeperOn) {
+            Serial.println("Beeper OFF");
+            digitalWrite(beepPin, LOW); // Beeper ausschalten
+            isBeeperOn = false;
+        }
+    }
 }
 
 void InitializeHTTPServer() {
