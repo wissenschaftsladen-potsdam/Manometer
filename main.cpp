@@ -11,7 +11,7 @@ Servo ObjServo;
 const int ServoGPIO = D4;
 const int beepPin = D5;
 bool isBeeperOn = false;
-const char* ssid_default = "Drucksensor_MachBar";
+const char* ssid_default = "Drucksensor_4";
 //float radius = 200;
 float lastKnownPressure = 300; // Globale Variable zum Speichern des letzten bekannten Druckwerts
 
