@@ -11,7 +11,7 @@ Servo ObjServo;
 const int ServoGPIO = D4;
 const int beepPin = D5;
 bool isBeeperOn = false;
-const char* ssid_default = "Drucksensor_4";
+const char* ssid_default = "Drucksensor_3";
 //float radius = 200;
 float lastKnownPressure = 300; // Globale Variable zum Speichern des letzten bekannten Druckwerts
 
@@ -1028,7 +1028,7 @@ void InitializeHTTPServer() {
 
         // Senden der Antwort an den Client
         String responseMessage = "SSID saved. Restarting. Loaded SSID: " + loadedSSID;
-        server.send(200, "text/plain", responseMessage);
+        server.send(200, "text/plain", responseMessage); 
         delay(100);
 
         // ESP8266 neu starten, um die neue SSID zu übernehmen
